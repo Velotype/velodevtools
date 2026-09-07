@@ -1,0 +1,21 @@
+{
+    "imports": {
+        "@velotype/velojson": "jsr:@velotype/velojson@^0.0.5",
+        "@std/fs": "jsr:@std/fs@^1.0.6",
+        "@types/chrome": "npm:@types/chrome@^0.0.280"
+    },
+    "compilerOptions": {
+        "lib": ["esnext", "dom", "dom.iterable"],
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "types": ["@types/chrome"]
+    },
+    "tasks": {
+        "icons": "deno run -A scripts/generate-icons.ts",
+        "copy-static": "deno run -A scripts/copy-static.ts",
+        "bundle": "deno bundle --platform browser --format iife --sourcemap=linked --outdir dist src/background/service-worker.ts src/content/page-hook.ts src/content/bridge.ts src/devtools/devtools.ts src/panel-tree/panel.ts src/panel-events/panel.ts src/panel-velojson/panel.ts src/popup/popup.ts",
+        "build": "deno task icons && deno task copy-static && deno task bundle",
+        "watch": "deno task icons && deno task copy-static && deno task bundle --watch",
+        "typecheck": "deno check src/"
+    }
+}

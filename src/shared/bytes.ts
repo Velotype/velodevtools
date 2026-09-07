@@ -54,3 +54,19 @@ export function describeEncodingFormat(bytes: Uint8Array): VSONEncodingFormat | 
     if (format === 1) return "KeyTable"
     return "VBIN"
 }
+
+/**
+ * velojson has a real, specific Content-Type per format -- see veloschema's `ContentTypes`
+ * (`application/vson; charset=utf-8` and `application/vbin; charset=utf-8`) and its generated
+ * clients, which set/read exactly these. When a Content-Type is available, that's authoritative
+ * and should be used instead of guessing from bytes.
+ */
+export type ContentTypeVerdict = "vson-or-vbin" | "other" | "unknown"
+
+export function classifyContentType(contentType: string | null | undefined): ContentTypeVerdict {
+    if (!contentType) return "unknown"
+    const lower = contentType.toLowerCase()
+    if (lower.includes("vson") || lower.includes("vbin")) return "vson-or-vbin"
+    if (lower === "application/octet-stream" || lower === "") return "unknown"
+    return "other"
+}

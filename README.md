@@ -1,9 +1,10 @@
 # Velotype DevTools
 
-A Chrome extension for debugging [Velotype](https://github.com/Velotype/velotype) projects. Two DevTools panels:
+A Chrome extension for debugging [Velotype](https://github.com/Velotype/velotype) projects. Three DevTools panels:
 
 - **Velotype** — the live component tree for the page, similar to React DevTools: class names, DOM anchor, and (for Class Components) their `attrs` and own instance fields, including live `RenderObject`/`RenderBasic` values. Click a node to inspect it and highlight it on the page.
-- **VeloJSON** — decodes [velojson](https://github.com/Velotype/velojson) (VSON) binary payloads. Automatically inspects network request/response bodies while the panel is open, plus a manual decode (bytes → JSON) and encode (JSON → bytes) tool.
+- **Velotype Events** — a snapshot of the event bus's current registrations (`listenersF`): every listening key, how many listeners are on it, and (resolved against `domReferences`) which live components/RenderObjects those are. This is a snapshot of what's *registered*, not a trace of what has *fired* — see [Known limitations](#known-limitations).
+- **VeloJSON** — decodes [velojson](https://github.com/Velotype/velojson) (VSON/VBIN) binary payloads. Automatically inspects network request/response bodies while the panel is open, plus a manual decode (bytes → JSON) and encode (JSON → bytes) tool.
 
 A toolbar popup shows a quick "is Velotype present on this page" status without opening DevTools.
 
@@ -50,43 +51,60 @@ typing against Velotype's internal (single-letter, undocumented) property names 
 `.w`, `.k` — see `classify()`/`labelFor()` in `page-hook.ts`), the same way React DevTools is
 coupled to React's fiber internals. If Velotype ever renames those, this needs updating alongside.
 
+The **Velotype Events** panel reads `listenersF`/`listenersR`, which are also part of
+`__vtAppMetadata` — no extra hook needed beyond the one above.
+
 The **VeloJSON** panel needs none of this — it runs entirely inside the DevTools page context using
-`chrome.devtools.network` and the real `@jsr/velotype__velojson` package.
+`chrome.devtools.network` and the real `@velotype/velojson` package (via JSR).
 
 ## Known limitations
 
 - **Component tree only covers the top frame.** The background relay only tracks one content
   script connection per tab; components rendered inside `<iframe>`s aren't merged into the tree.
+- **Events panel is a registration snapshot, not a live trace.** It shows what's currently
+  registered on the event bus, not a log of events as they fire — a "did my `onChange` actually
+  fire, with what data" trace would need a small hook in `emitEvent()` itself. Measured at ~100
+  bytes minified (~60 bytes gzipped) added to Velotype's own shipped bundle, but decided against for
+  now — the registration snapshot covers most debugging needs (leaked listeners, "is anything even
+  listening on this key") without that always-on cost or the memory pinned by a trace buffer.
 - **Request body decoding is best-effort.** `chrome.devtools.network`'s extension API only exposes
   `postData` as text, which can be lossy for binary bodies depending on Chrome version. Response
   body decoding (`request.getContent()`) is reliable since it gives an explicit `base64` encoding
   flag for binary content. Use the manual decode tool as a fallback for request payloads that don't
   decode automatically.
-- **VSON detection is heuristic.** A buffer is treated as "possibly VSON" if its first byte falls in
-  `[0, 23]` (the valid range of `(encodingFormat * 8) + wireType` for the three known encoding
-  formats), then an actual decode is attempted. This can't be 100% certain for arbitrary binary
-  payloads that happen to start with such a byte, but false positives should be very rare in
-  practice.
+- **VSON/VBIN detection prefers Content-Type, falls back to a byte heuristic.** velojson payloads
+  have real, specific Content-Types — `application/vson` and `application/vbin` (see veloschema's
+  `ContentTypes` and its generated clients/gateways, which set/read exactly these). The panel reads
+  this from `postData.mimeType` / `response.content.mimeType` (falling back to the raw `Content-Type`
+  header) and trusts it: a non-VSON Content-Type means the body is never even attempted, and a
+  VSON/VBIN Content-Type means decoding is always attempted, surfacing the real error if it fails.
+  Only when there's no usable Content-Type at all (e.g. `application/octet-stream`, or missing) does
+  it fall back to guessing from the leading byte — velojson's leading byte packs
+  `(encodingFormat * 8) + wireType`, so a valid buffer's first byte must fall in `[0, 23]`; this is
+  necessarily a guess and is labeled as such in the UI (`VSON?`/`VBIN?`). The manual decode tool has
+  no HTTP context at all, so it always uses this same byte heuristic.
 - **VBIN (KeyID format) payloads decode in "debug format" only.** This panel imports the `velojson`
-  *server* build (`@jsr/velotype__velojson`, not `/browser` — the browser build only implements the
-  KeyTable format and throws on anything else; bundle size doesn't matter here since this only runs
-  inside the DevTools page). Its `VSON.decode()` handles Base, KeyTable, and VBIN payloads
-  uniformly, but for VBIN it can only produce a "debug format": object keys come back as their raw
-  numeric KeyIDs (e.g. `{"1": "hello"}`) rather than real field names, since real names require a
-  schema-generated `VBINObjectMapper` (see `veloschema`) that this generic extension has no way to
-  obtain for an arbitrary site. The panel labels VBIN output accordingly.
+  *server* build (`@velotype/velojson`, not `@velotype/velojson/browser` — the browser build only
+  implements the KeyTable format and throws on anything else; bundle size doesn't matter here since
+  this only runs inside the DevTools page). Its `VSON.decode()` handles Base, KeyTable, and VBIN
+  payloads uniformly, but for VBIN it can only produce a "debug format": object keys come back as
+  their raw numeric KeyIDs (e.g. `{"1": "hello"}`) rather than real field names, since real names
+  require a schema-generated `VBINObjectMapper` (see `veloschema`) that this generic extension has no
+  way to obtain for an arbitrary site. The panel labels VBIN output accordingly.
 
 ## Development
 
+Requires [Deno](https://deno.com) (no npm, no `node_modules` — dependencies are `jsr:`/`npm:`
+specifiers in `deno.json`, fetched into Deno's own cache on first use):
+
 ```sh
-npm install     # also pulls @jsr/velotype__velojson via the JSR npm registry (see .npmrc)
-npm run build   # generates icons + bundles everything into dist/
-npm run watch   # same, but rebuilds on change
-npm run typecheck
+deno task build       # generates icons + bundles everything into dist/
+deno task watch       # same, but rebuilds on change
+deno task typecheck
 ```
 
 Then load `dist/` as an unpacked extension: `chrome://extensions` → enable Developer mode → **Load
-unpacked** → select the `dist/` folder. After `npm run watch` picks up a change, reload the
+unpacked** → select the `dist/` folder. After `deno task watch` picks up a change, reload the
 extension from `chrome://extensions` (and refresh the inspected page, since content scripts only
 (re-)inject on navigation).
 
