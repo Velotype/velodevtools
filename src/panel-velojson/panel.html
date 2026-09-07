@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="panel.css" />
+<div id="app">
+  <div id="layout">
+    <div id="left-pane">
+      <div class="pane-header">
+        Network requests
+        <span id="hint" class="hint">(captured while this panel is open)</span>
+        <button id="clear-btn">Clear</button>
+      </div>
+      <table id="requests-table">
+        <thead><tr><th>Method</th><th>URL</th><th>Req</th><th>Resp</th></tr></thead>
+        <tbody id="requests-body"></tbody>
+      </table>
+
+      <div class="pane-header">Manual decode / encode</div>
+      <div id="manual">
+        <label>Input format
+          <select id="manual-format">
+            <option value="base64">base64</option>
+            <option value="hex">hex</option>
+          </select>
+        </label>
+        <textarea id="manual-input" placeholder="Paste base64 or hex VSON bytes to decode, or JSON to encode…"></textarea>
+        <div class="manual-actions">
+          <button id="decode-btn">Decode → JSON</button>
+          <button id="encode-btn">Encode JSON → bytes</button>
+        </div>
+      </div>
+    </div>
+    <div id="right-pane">
+      <div id="details-empty">Select a request, or use manual decode/encode.</div>
+      <pre id="details-output" hidden></pre>
+    </div>
+  </div>
+</div>
+<script src="panel.js"></script>

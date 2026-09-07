@@ -1,0 +1,49 @@
+:root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1b1b1b;
+    --muted: #6b6f76;
+    --border: #e0e0e3;
+    --accent: #4f46e5;
+    --accent-bg: rgba(79, 70, 229, 0.12);
+    --ok: #16a34a;
+    --err: #dc2626;
+    --mono: "SFMono-Regular", Consolas, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1e1e1e;
+        --fg: #e8e8e8;
+        --muted: #9a9a9a;
+        --border: #3a3a3d;
+        --accent: #a5b4fc;
+        --accent-bg: rgba(165, 180, 252, 0.16);
+        --ok: #4ade80;
+        --err: #f87171;
+    }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+#app { height: 100vh; }
+#layout { display: flex; height: 100%; }
+#left-pane { width: 55%; border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: auto; }
+#right-pane { flex: 1; overflow: auto; padding: 10px 12px; }
+.pane-header { padding: 6px 10px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; gap: 8px; flex: none; }
+.hint { font-weight: normal; color: var(--muted); font-size: 11px; }
+.pane-header button { margin-left: auto; }
+table#requests-table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+table#requests-table th, table#requests-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 1px; }
+table#requests-table th:nth-child(2), table#requests-table td:nth-child(2) { max-width: none; width: 100%; }
+table#requests-table tbody tr { cursor: pointer; }
+table#requests-table tbody tr:hover { background: var(--accent-bg); }
+table#requests-table tbody tr.selected { background: var(--accent); color: #fff; }
+.status-yes { color: var(--ok); }
+.status-no { color: var(--muted); }
+tr.selected .status-yes, tr.selected .status-no { color: inherit; }
+#manual { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+#manual label { font-size: 11px; color: var(--muted); }
+#manual textarea { width: 100%; height: 70px; font-family: var(--mono); font-size: 11px; resize: vertical; }
+.manual-actions { display: flex; gap: 8px; }
+#details-empty { color: var(--muted); }
+#details-output { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 11.5px; }
+#details-output.error { color: var(--err); }
