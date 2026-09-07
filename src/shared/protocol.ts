@@ -61,6 +61,27 @@ export interface DOMRectSummary {
     height: number
 }
 
+/** A resolved reference to a live component/renderObject/withComponent, for display */
+export interface EventPartyRef {
+    id: string
+    label: string
+    kind: ComponentNodeKind
+}
+
+export interface EventKeySummary {
+    /** The listening key passed to registerEventListener()/emitEvent() */
+    key: string
+    /** Best-effort: resolved if `key` matches RenderObject's own "vt-ro-<vtKey>" pattern --
+     *  custom keys from user code have no way to resolve an "owner" from the key alone */
+    owner: EventPartyRef | null
+    /** Everything currently registered to listen on this key, resolved where possible */
+    listeners: Array<EventPartyRef | { id: string; label: null; kind: null }>
+}
+
+export interface EventsSnapshot {
+    instances: Array<{ instanceId: number; keys: EventKeySummary[] }>
+}
+
 // ---------------------------------------------------------------------------
 // page-hook (MAIN world) <-> bridge (ISOLATED content script), via window.postMessage
 // ---------------------------------------------------------------------------
@@ -73,12 +94,14 @@ export type PageToBridgeMessage =
     | { source: typeof PAGE_HOOK_SOURCE; type: "tree"; requestId: string; tree: ComponentTreeNode[] }
     | { source: typeof PAGE_HOOK_SOURCE; type: "details"; requestId: string; details: ComponentDetails | null }
     | { source: typeof PAGE_HOOK_SOURCE; type: "highlightRects"; requestId: string; rects: DOMRectSummary[] }
+    | { source: typeof PAGE_HOOK_SOURCE; type: "events"; requestId: string; events: EventsSnapshot }
 
 export type BridgeToPageMessage =
     | { source: typeof BRIDGE_SOURCE; type: "requestTree"; requestId: string }
     | { source: typeof BRIDGE_SOURCE; type: "requestDetails"; requestId: string; id: string }
     | { source: typeof BRIDGE_SOURCE; type: "requestHighlight"; requestId: string; id: string | null }
     | { source: typeof BRIDGE_SOURCE; type: "requestHookStatus" }
+    | { source: typeof BRIDGE_SOURCE; type: "requestEvents"; requestId: string }
 
 // ---------------------------------------------------------------------------
 // panel (DevTools page) <-> background <-> bridge (ISOLATED content script), via chrome.runtime.Port
@@ -89,12 +112,14 @@ export type PanelRequest =
     | { type: "requestDetails"; id: string }
     | { type: "requestHighlight"; id: string | null }
     | { type: "requestHookStatus" }
+    | { type: "requestEvents" }
 
 export type PanelResponse =
     | { type: "hookStatus"; status: HookStatus }
     | { type: "tree"; tree: ComponentTreeNode[] }
     | { type: "details"; details: ComponentDetails | null }
     | { type: "contentScriptGone" }
+    | { type: "events"; events: EventsSnapshot }
 
 /** Port name used by both panel-tree and popup when connecting to the background worker */
 export const TREE_PORT_NAME = "velodevtools-tree"

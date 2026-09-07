@@ -20,6 +20,9 @@ import {
     type ComponentNodeKind,
     type ComponentTreeNode,
     type DOMRectSummary,
+    type EventKeySummary,
+    type EventPartyRef,
+    type EventsSnapshot,
     type FieldPreview,
     type HookStatus
 } from "../shared/protocol.ts"
@@ -32,6 +35,8 @@ import { isRenderObjectLike, preview, typeLabelOf } from "../shared/serialize.ts
 interface VelotypeHookInstanceMetadata {
     domKeyName: string
     domReferences: Map<string, unknown>
+    /** Forward event-bus map: listeningKey -> vtKey (of the listening object) -> listener fn */
+    listenersF: Map<string, Map<string, unknown>>
 }
 interface VelotypeDevtoolsHookGlobal {
     instances: Map<number, VelotypeHookInstanceMetadata>
@@ -204,6 +209,41 @@ function buildHighlightRects(id: string | null): DOMRectSummary[] {
     return rects
 }
 
+// ---- Event bus registration snapshot -------------------------------------------------------
+// Read-only, from listenersF (already part of __vtAppMetadata) -- no velotype core changes
+// needed. Shows what's currently registered, not what has fired; see README for why a live trace
+// is a separate, heavier feature.
+
+const RENDER_OBJECT_KEY_PATTERN = /^vt-ro-(.+)$/
+
+/** Resolves a vtKey back to a display-friendly reference, if it's still a live component/
+ *  renderObject/withComponent in this instance's domReferences -- otherwise a bare id. */
+function resolveEventParty(instanceId: number, metadata: VelotypeHookInstanceMetadata, vtKey: string): EventPartyRef | { id: string; label: null; kind: null } {
+    const id = `${instanceId}:${vtKey}`
+    const ref = metadata.domReferences.get(vtKey)
+    const kind = classify(ref)
+    if (!kind) return { id, label: null, kind: null }
+    return { id, label: labelFor(ref as Record<string, unknown>, kind), kind }
+}
+
+function buildEventsSnapshot(): EventsSnapshot {
+    const instances = getInstances()
+    return {
+        instances: instances.map(([instanceId, metadata]) => {
+            const keys: EventKeySummary[] = Array.from(metadata.listenersF.entries()).map(([key, listenerMap]) => {
+                const ownerVtKey = RENDER_OBJECT_KEY_PATTERN.exec(key)?.[1]
+                const owner = ownerVtKey ? resolveEventParty(instanceId, metadata, ownerVtKey) : null
+                return {
+                    key,
+                    owner: owner && owner.kind ? owner : null,
+                    listeners: Array.from(listenerMap.keys()).map(vtKey => resolveEventParty(instanceId, metadata, vtKey))
+                }
+            })
+            return { instanceId, keys }
+        })
+    }
+}
+
 // ---- Messaging with bridge.ts ---------------------------------------------------------------
 
 function post(message: Parameters<typeof window.postMessage>[0]): void {
@@ -231,6 +271,9 @@ window.addEventListener("message", (event: MessageEvent) => {
             break
         case "requestHookStatus":
             pushHookStatus()
+            break
+        case "requestEvents":
+            post({ source: PAGE_HOOK_SOURCE, type: "events", requestId: data.requestId, events: buildEventsSnapshot() })
             break
     }
 })
