@@ -63,9 +63,18 @@ The **VeloJSON** panel needs none of this — it runs entirely inside the DevToo
   flag for binary content. Use the manual decode tool as a fallback for request payloads that don't
   decode automatically.
 - **VSON detection is heuristic.** A buffer is treated as "possibly VSON" if its first byte falls in
-  `[8, 15]` (the only currently-valid `(encodingFormat * 8) + wireType` values), then an actual
-  decode is attempted. This can't be 100% certain for arbitrary binary payloads that happen to start
-  with such a byte, but false positives should be very rare in practice.
+  `[0, 23]` (the valid range of `(encodingFormat * 8) + wireType` for the three known encoding
+  formats), then an actual decode is attempted. This can't be 100% certain for arbitrary binary
+  payloads that happen to start with such a byte, but false positives should be very rare in
+  practice.
+- **VBIN (KeyID format) payloads decode in "debug format" only.** This panel imports the `velojson`
+  *server* build (`@jsr/velotype__velojson`, not `/browser` — the browser build only implements the
+  KeyTable format and throws on anything else; bundle size doesn't matter here since this only runs
+  inside the DevTools page). Its `VSON.decode()` handles Base, KeyTable, and VBIN payloads
+  uniformly, but for VBIN it can only produce a "debug format": object keys come back as their raw
+  numeric KeyIDs (e.g. `{"1": "hello"}`) rather than real field names, since real names require a
+  schema-generated `VBINObjectMapper` (see `veloschema`) that this generic extension has no way to
+  obtain for an arbitrary site. The panel labels VBIN output accordingly.
 
 ## Development
 
