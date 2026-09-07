@@ -28,9 +28,29 @@ export function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join(" ")
 }
 
-/** VSON's leading byte packs `(encodingFormat * 8) + wireType`; only encodingFormat 1
- *  (KeyTable) exists today, so a valid VSON buffer must start with a byte in [8, 15]. */
+/**
+ * velojson's leading byte packs `(encodingFormat * 8) + wireType`, where `encodingFormat` is one
+ * of Base (0), KeyTable (1), or KeyID/VBIN (2) and `wireType` is 0-7 -- see velojson's common.ts.
+ * So a valid buffer's first byte must fall in [0, 23].
+ */
 export function looksLikeVSON(bytes: Uint8Array): boolean {
     const first = bytes[0]
-    return first !== undefined && first >= 8 && first <= 15
+    return first !== undefined && first <= 23
+}
+
+export type VSONEncodingFormat = "Base" | "KeyTable" | "VBIN"
+
+/**
+ * Reads just the encoding format out of a velojson buffer's leading byte, for display purposes.
+ * VBIN (KeyID format) payloads decode via `VSON.decode()` into a "debug format" -- object keys
+ * come back as their raw numeric KeyIDs (e.g. `{"1": "hello"}`) rather than real field names,
+ * since real names require a schema-generated mapper this extension doesn't have access to.
+ */
+export function describeEncodingFormat(bytes: Uint8Array): VSONEncodingFormat | null {
+    const first = bytes[0]
+    if (first === undefined || first > 23) return null
+    const format = Math.floor(first / 8)
+    if (format === 0) return "Base"
+    if (format === 1) return "KeyTable"
+    return "VBIN"
 }

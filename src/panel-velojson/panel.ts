@@ -1,5 +1,12 @@
-import { VSON } from "@jsr/velotype__velojson/browser"
-import { base64ToBytes, bytesToBase64, bytesToHex, hexToBytes, looksLikeVSON } from "../shared/bytes.ts"
+// Deliberately importing the "server" build ("@jsr/velotype__velojson", not "/browser"): the
+// browser build only implements the KeyTable format and hard-throws on Base or VBIN (KeyID)
+// payloads. The server build's VSON.decode() handles all three, falling back to a "debug format"
+// for VBIN (object keys become their raw numeric KeyIDs, since real key names require a
+// schema-generated mapper this panel doesn't have -- see describeEncodingFormat() below and the
+// README). Bundle size doesn't matter here since this only runs inside the DevTools page, never
+// shipped to an end user's browser.
+import { VSON } from "@jsr/velotype__velojson"
+import { base64ToBytes, bytesToBase64, bytesToHex, describeEncodingFormat, hexToBytes, looksLikeVSON } from "../shared/bytes.ts"
 
 interface BodyResult {
     /** No body present at all (e.g. a GET request with no postData) */
@@ -97,7 +104,7 @@ function statusCell(body: BodyResult): HTMLTableCellElement {
         td.textContent = "—"
         td.className = "status-no"
     } else if (body.decoded !== undefined) {
-        td.textContent = "VSON"
+        td.textContent = (body.bytes && describeEncodingFormat(body.bytes)) || "VSON"
         td.className = "status-yes"
     } else {
         td.textContent = "no"
@@ -133,10 +140,15 @@ function showEmpty(): void {
 
 function bodySection(title: string, body: BodyResult): string {
     if (body.absent) return `${title}: (no body)`
-    const lines = [`${title}:`]
+    const format = body.bytes ? describeEncodingFormat(body.bytes) : null
+    const lines = [`${title}:${format ? ` [${format}]` : ""}`]
     if (body.error) {
         lines.push(`  ${body.error}`)
     } else if (body.decoded !== undefined) {
+        if (format === "VBIN") {
+            lines.push("  VBIN debug decode: object keys are raw numeric KeyIDs, not real field names")
+            lines.push("  (real names require a schema-generated mapper this extension doesn't have)")
+        }
         lines.push(indent(JSON.stringify(body.decoded, null, 2)))
     } else {
         lines.push("  (empty)")
@@ -193,8 +205,16 @@ decodeBtn.addEventListener("click", () => {
     }
     try {
         const bytes = manualFormat.value === "hex" ? hexToBytes(text) : base64ToBytes(text)
+        const format = describeEncodingFormat(bytes)
         const decoded = VSON.decode(bytes)
-        showText(JSON.stringify(decoded, null, 2))
+        const lines = format ? [`[${format}]`, ""] : []
+        if (format === "VBIN") {
+            lines.push("VBIN debug decode: object keys are raw numeric KeyIDs, not real field names")
+            lines.push("(real names require a schema-generated mapper this extension doesn't have)")
+            lines.push("")
+        }
+        lines.push(JSON.stringify(decoded, null, 2))
+        showText(lines.join("\n"))
     } catch (err) {
         showError(`Decode failed: ${err instanceof Error ? err.message : String(err)}`)
     }
