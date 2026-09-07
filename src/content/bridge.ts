@@ -87,6 +87,11 @@ function connect(): void {
         if (message.type === "requestHighlight") {
             const response = await requestFromPage(requestId => ({ source: BRIDGE_SOURCE, type: "requestHighlight", requestId, id: message.id }))
             if (response.type === "highlightRects") drawOverlay(response.rects)
+            return
+        }
+        if (message.type === "requestEvents") {
+            const response = await requestFromPage(requestId => ({ source: BRIDGE_SOURCE, type: "requestEvents", requestId }))
+            if (response.type === "events") sendToPanel({ type: "events", events: response.events })
         }
     })
     port.onDisconnect.addListener(() => {

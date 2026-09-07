@@ -16,6 +16,7 @@ cpSync(join(root, "public"), dist, { recursive: true })
 const htmlShells = {
     "devtools/devtools.html": "devtools/devtools.html",
     "panel-tree/panel.html": "panel-tree/panel.html",
+    "panel-events/panel.html": "panel-events/panel.html",
     "panel-velojson/panel.html": "panel-velojson/panel.html",
     "popup/popup.html": "popup/popup.html"
 }
@@ -30,6 +31,7 @@ const entryPoints = [
     "src/content/bridge.ts",
     "src/devtools/devtools.ts",
     "src/panel-tree/panel.ts",
+    "src/panel-events/panel.ts",
     "src/panel-velojson/panel.ts",
     "src/popup/popup.ts"
 ]
