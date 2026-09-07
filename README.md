@@ -72,17 +72,17 @@ The **VeloJSON** panel needs none of this — it runs entirely inside the DevToo
   body decoding (`request.getContent()`) is reliable since it gives an explicit `base64` encoding
   flag for binary content. Use the manual decode tool as a fallback for request payloads that don't
   decode automatically.
-- **VSON/VBIN detection prefers Content-Type, falls back to a byte heuristic.** velojson payloads
+- **VSON/VBIN detection on the network tab is Content-Type only, by design.** velojson payloads
   have real, specific Content-Types — `application/vson` and `application/vbin` (see veloschema's
-  `ContentTypes` and its generated clients/gateways, which set/read exactly these). The panel reads
-  this from `postData.mimeType` / `response.content.mimeType` (falling back to the raw `Content-Type`
-  header) and trusts it: a non-VSON Content-Type means the body is never even attempted, and a
-  VSON/VBIN Content-Type means decoding is always attempted, surfacing the real error if it fails.
-  Only when there's no usable Content-Type at all (e.g. `application/octet-stream`, or missing) does
-  it fall back to guessing from the leading byte — velojson's leading byte packs
-  `(encodingFormat * 8) + wireType`, so a valid buffer's first byte must fall in `[0, 23]`; this is
-  necessarily a guess and is labeled as such in the UI (`VSON?`/`VBIN?`). The manual decode tool has
-  no HTTP context at all, so it always uses this same byte heuristic.
+  `ContentTypes` and its generated clients/gateways, which set/read exactly these, typically as
+  `application/vson; charset=utf-8`). The panel reads this from `postData.mimeType` /
+  `response.content.mimeType` (falling back to the raw `Content-Type` header), matching by substring
+  so the `; charset=...` suffix doesn't matter, and treats it as authoritative: a non-VSON
+  Content-Type means the body is never even attempted, and a VSON/VBIN Content-Type means decoding
+  is always attempted, surfacing the real error if it fails. There's no byte-content fallback for a
+  body with no Content-Type at all (e.g. `application/octet-stream`) — a real Content-Type is
+  required. The manual decode/encode tool is the escape hatch for anything without one, since it has
+  no HTTP context to read a Content-Type from in the first place.
 - **VBIN (KeyID format) payloads decode in "debug format" only.** This panel imports the `velojson`
   *server* build (`@velotype/velojson`, not `@velotype/velojson/browser` — the browser build only
   implements the KeyTable format and throws on anything else; bundle size doesn't matter here since
