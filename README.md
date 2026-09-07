@@ -98,10 +98,15 @@ Requires [Deno](https://deno.com) (no npm, no `node_modules` — dependencies ar
 specifiers in `deno.json`, fetched into Deno's own cache on first use):
 
 ```sh
-deno task build       # generates icons + bundles everything into dist/
+deno task build       # copies static files (incl. icons) + bundles everything into dist/
 deno task watch       # same, but rebuilds on change
 deno task typecheck
 ```
+
+The toolbar/panel icons (`public/icons/*.png`) are the real Velotype logo (`assets/velotype-logo.svg`,
+copied from the `velotype` repo's own `assets/logo.svg`), rasterized once via
+`deno task rasterize-icons` (needs a real Chrome, since the logo has an arc in it — not part of the
+regular build). Re-run it if the logo ever changes; the checked-in PNGs are what actually ships.
 
 Then load `dist/` as an unpacked extension: `chrome://extensions` → enable Developer mode → **Load
 unpacked** → select the `dist/` folder. After `deno task watch` picks up a change, reload the

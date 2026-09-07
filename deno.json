@@ -11,11 +11,11 @@
         "types": ["@types/chrome"]
     },
     "tasks": {
-        "icons": "deno run -A scripts/generate-icons.ts",
         "copy-static": "deno run -A scripts/copy-static.ts",
         "bundle": "deno bundle --platform browser --format iife --sourcemap=linked --outdir dist src/background/service-worker.ts src/content/page-hook.ts src/content/bridge.ts src/devtools/devtools.ts src/panel-tree/panel.ts src/panel-events/panel.ts src/panel-velojson/panel.ts src/popup/popup.ts",
-        "build": "deno task icons && deno task copy-static && deno task bundle",
-        "watch": "deno task icons && deno task copy-static && deno task bundle --watch",
-        "typecheck": "deno check src/"
+        "build": "deno task copy-static && deno task bundle",
+        "watch": "deno task copy-static && deno task bundle --watch",
+        "typecheck": "deno check src/",
+        "rasterize-icons": "deno run -A scripts/rasterize-icons.ts"
     }
 }
