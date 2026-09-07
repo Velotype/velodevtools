@@ -1,12 +1,12 @@
-// Deliberately importing the "server" build ("@jsr/velotype__velojson", not "/browser"): the
-// browser build only implements the KeyTable format and hard-throws on Base or VBIN (KeyID)
+// Deliberately importing the "server" build ("@velotype/velojson", not "@velotype/velojson/browser"):
+// the browser build only implements the KeyTable format and hard-throws on Base or VBIN (KeyID)
 // payloads. The server build's VSON.decode() handles all three, falling back to a "debug format"
 // for VBIN (object keys become their raw numeric KeyIDs, since real key names require a
 // schema-generated mapper this panel doesn't have -- see describeEncodingFormat() below and the
 // README). Bundle size doesn't matter here since this only runs inside the DevTools page, never
 // shipped to an end user's browser.
-import { VSON } from "@jsr/velotype__velojson"
-import { base64ToBytes, bytesToBase64, bytesToHex, describeEncodingFormat, hexToBytes, looksLikeVSON } from "../shared/bytes.ts"
+import { VSON } from "@velotype/velojson"
+import { base64ToBytes, bytesToBase64, bytesToHex, classifyContentType, describeEncodingFormat, hexToBytes, looksLikeVSON } from "../shared/bytes.ts"
 
 interface BodyResult {
     /** No body present at all (e.g. a GET request with no postData) */
@@ -14,6 +14,41 @@ interface BodyResult {
     bytes: Uint8Array | null
     decoded: unknown
     error: string | null
+    /** How we decided to try decoding this as velojson -- see decodeBody() */
+    detection: "content-type" | "heuristic" | null
+}
+
+function findHeader(headers: Array<{ name: string; value: string }> | undefined, name: string): string | null {
+    const lower = name.toLowerCase()
+    const found = headers?.find(h => h.name.toLowerCase() === lower)
+    return found ? found.value : null
+}
+
+/**
+ * velojson has real, specific Content-Types (`application/vson`, `application/vbin` -- see
+ * veloschema's generated clients/gateways), so that's authoritative when present: trust it and
+ * always attempt a decode, surfacing the real error if it fails. Content-Type saying anything else
+ * (json, html, ...) means definitely-not-velojson, so don't even try. Only fall back to guessing
+ * from the leading byte when there's no usable Content-Type to go on at all.
+ */
+function decodeBody(bytes: Uint8Array | null, contentType: string | null): Pick<BodyResult, "decoded" | "error" | "detection"> {
+    if (!bytes || bytes.length === 0) return { decoded: undefined, error: null, detection: null }
+    const verdict = classifyContentType(contentType)
+    if (verdict === "other") return { decoded: undefined, error: null, detection: null }
+    if (verdict === "vson-or-vbin") {
+        try {
+            return { decoded: VSON.decode(bytes), error: null, detection: "content-type" }
+        } catch (err) {
+            return { decoded: undefined, error: `Content-Type is "${contentType}" but decoding failed: ${err instanceof Error ? err.message : String(err)}`, detection: "content-type" }
+        }
+    }
+    // verdict === "unknown": no Content-Type to go on, fall back to a best-effort byte guess
+    if (!looksLikeVSON(bytes)) return { decoded: undefined, error: null, detection: null }
+    try {
+        return { decoded: VSON.decode(bytes), error: null, detection: "heuristic" }
+    } catch (err) {
+        return { decoded: undefined, error: err instanceof Error ? err.message : String(err), detection: "heuristic" }
+    }
 }
 
 interface RequestRow {
@@ -33,37 +68,27 @@ const detailsEmpty = document.getElementById("details-empty") as HTMLDivElement
 const detailsOutput = document.getElementById("details-output") as HTMLPreElement
 const clearBtn = document.getElementById("clear-btn") as HTMLButtonElement
 
-function decodeIfPlausible(bytes: Uint8Array | null): { decoded: unknown; error: string | null } {
-    if (!bytes || bytes.length === 0) return { decoded: undefined, error: null }
-    if (!looksLikeVSON(bytes)) return { decoded: undefined, error: "Doesn't look like VSON (unexpected leading byte)" }
-    try {
-        return { decoded: VSON.decode(bytes), error: null }
-    } catch (err) {
-        return { decoded: undefined, error: err instanceof Error ? err.message : String(err) }
-    }
-}
-
 function requestBodyFrom(entry: chrome.devtools.network.Request): BodyResult {
     const postData = entry.request.postData
-    if (!postData || !postData.text) return { absent: true, bytes: null, decoded: undefined, error: null }
+    if (!postData || !postData.text) return { absent: true, bytes: null, decoded: undefined, error: null, detection: null }
     // Chrome's DevTools extension API only exposes postData as text, which can be lossy for
     // binary bodies -- this is a best-effort decode, see README for details.
     const bytes = new Uint8Array(postData.text.length)
     for (let i = 0; i < postData.text.length; i++) bytes[i] = postData.text.charCodeAt(i) & 0xff
-    const { decoded, error } = decodeIfPlausible(bytes)
-    return { absent: false, bytes, decoded, error }
+    const contentType = postData.mimeType || findHeader(entry.request.headers, "content-type")
+    return { absent: false, bytes, ...decodeBody(bytes, contentType) }
 }
 
 function responseBodyFrom(entry: chrome.devtools.network.Request): Promise<BodyResult> {
     return new Promise(resolve => {
         entry.getContent((content, encoding) => {
             if (!content) {
-                resolve({ absent: true, bytes: null, decoded: undefined, error: null })
+                resolve({ absent: true, bytes: null, decoded: undefined, error: null, detection: null })
                 return
             }
             const bytes = encoding === "base64" ? base64ToBytes(content) : Uint8Array.from(content, c => c.charCodeAt(0) & 0xff)
-            const { decoded, error } = decodeIfPlausible(bytes)
-            resolve({ absent: false, bytes, decoded, error })
+            const contentType = entry.response.content.mimeType || findHeader(entry.response.headers, "content-type")
+            resolve({ absent: false, bytes, ...decodeBody(bytes, contentType) })
         })
     })
 }
@@ -104,7 +129,9 @@ function statusCell(body: BodyResult): HTMLTableCellElement {
         td.textContent = "—"
         td.className = "status-no"
     } else if (body.decoded !== undefined) {
-        td.textContent = (body.bytes && describeEncodingFormat(body.bytes)) || "VSON"
+        const format = (body.bytes && describeEncodingFormat(body.bytes)) || "VSON"
+        td.textContent = body.detection === "heuristic" ? `${format}?` : format
+        td.title = body.detection === "heuristic" ? "Content-Type didn't say; guessed from the leading byte" : "Confirmed by Content-Type"
         td.className = "status-yes"
     } else {
         td.textContent = "no"
@@ -141,7 +168,8 @@ function showEmpty(): void {
 function bodySection(title: string, body: BodyResult): string {
     if (body.absent) return `${title}: (no body)`
     const format = body.bytes ? describeEncodingFormat(body.bytes) : null
-    const lines = [`${title}:${format ? ` [${format}]` : ""}`]
+    const detectionNote = body.detection === "heuristic" ? " (guessed from leading byte, no Content-Type)" : ""
+    const lines = [`${title}:${format ? ` [${format}]${detectionNote}` : ""}`]
     if (body.error) {
         lines.push(`  ${body.error}`)
     } else if (body.decoded !== undefined) {
