@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="panel.css" />
+<div id="app">
+  <div id="status-bar"></div>
+  <div id="layout">
+    <div id="tree-pane"><ul id="tree" class="tree"></ul></div>
+    <div id="details-pane">
+      <div id="details-empty">Select a component to inspect it.</div>
+      <div id="details-content" hidden>
+        <div id="details-header"></div>
+        <h3>Attrs</h3>
+        <table id="attrs-table" class="fields"></table>
+        <h3>Fields</h3>
+        <table id="fields-table" class="fields"></table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="panel.js"></script>
