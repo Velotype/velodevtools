@@ -92,6 +92,11 @@ function connect(): void {
         if (message.type === "requestEvents") {
             const response = await requestFromPage(requestId => ({ source: BRIDGE_SOURCE, type: "requestEvents", requestId }))
             if (response.type === "events") sendToPanel({ type: "events", events: response.events })
+            return
+        }
+        if (message.type === "requestFieldChildren") {
+            const response = await requestFromPage(requestId => ({ source: BRIDGE_SOURCE, type: "requestFieldChildren", requestId, id: message.id, path: message.path }))
+            if (response.type === "fieldChildren") sendToPanel({ type: "fieldChildren", id: response.id, path: response.path, children: response.children })
         }
     })
     port.onDisconnect.addListener(() => {

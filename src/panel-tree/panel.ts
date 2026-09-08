@@ -12,12 +12,19 @@ const treeEl = document.getElementById("tree") as HTMLUListElement
 const detailsEmpty = document.getElementById("details-empty") as HTMLDivElement
 const detailsContent = document.getElementById("details-content") as HTMLDivElement
 const detailsHeader = document.getElementById("details-header") as HTMLDivElement
-const attrsTable = document.getElementById("attrs-table") as HTMLTableElement
-const fieldsTable = document.getElementById("fields-table") as HTMLTableElement
+const attrsTree = document.getElementById("attrs-tree") as HTMLUListElement
+const fieldsTree = document.getElementById("fields-tree") as HTMLUListElement
 
 let selectedId: string | null = null
 const collapsed = new Set<string>()
 let latestTree: ComponentTreeNode[] = []
+let latestDetails: ComponentDetails | null = null
+
+/** Which field paths are currently expanded, and their last-fetched children -- keyed by
+ *  JSON.stringify(path) since a real object key could itself contain "." or other separators.
+ *  Cleared whenever the selected component changes, since paths are only meaningful relative to it. */
+const expandedPaths = new Set<string>()
+const fieldChildrenCache = new Map<string, FieldPreview[] | null>()
 
 const port = chrome.runtime.connect({ name: TREE_PORT_NAME })
 port.postMessage({ type: "init", tabId: chrome.devtools.inspectedWindow.tabId })
@@ -27,12 +34,22 @@ port.onMessage.addListener((message: PanelResponse) => {
     else if (message.type === "tree") renderTree(message.tree)
     else if (message.type === "details") renderDetails(message.details)
     else if (message.type === "contentScriptGone") renderStatus({ present: false, instances: [] }, true)
+    else if (message.type === "fieldChildren") {
+        fieldChildrenCache.set(JSON.stringify(message.path), message.children)
+        renderDetails(latestDetails)
+    }
 })
 
 function refresh(): void {
     port.postMessage({ type: "requestHookStatus" })
     port.postMessage({ type: "requestTree" })
-    if (selectedId) port.postMessage({ type: "requestDetails", id: selectedId })
+    if (selectedId) {
+        port.postMessage({ type: "requestDetails", id: selectedId })
+        // Keep already-expanded branches live too, not just the top-level fields list.
+        for (const pathKey of expandedPaths) {
+            port.postMessage({ type: "requestFieldChildren", id: selectedId, path: JSON.parse(pathKey) })
+        }
+    }
 }
 refresh()
 setInterval(refresh, 1500)
@@ -105,6 +122,10 @@ function renderNode(node: ComponentTreeNode): HTMLLIElement {
     row.appendChild(tag)
 
     row.addEventListener("click", () => {
+        if (selectedId !== node.id) {
+            expandedPaths.clear()
+            fieldChildrenCache.clear()
+        }
         selectedId = node.id
         renderTree(latestTree)
         port.postMessage({ type: "requestDetails", id: node.id })
@@ -128,6 +149,7 @@ function renderNode(node: ComponentTreeNode): HTMLLIElement {
 }
 
 function renderDetails(details: ComponentDetails | null): void {
+    latestDetails = details
     if (!details) {
         detailsEmpty.hidden = false
         detailsContent.hidden = true
@@ -137,33 +159,86 @@ function renderDetails(details: ComponentDetails | null): void {
     detailsEmpty.hidden = true
     detailsContent.hidden = false
     detailsHeader.textContent = `${details.label}  (${details.kind})`
-    renderFieldsTable(attrsTable, details.attrs, "No attrs.")
-    renderFieldsTable(fieldsTable, details.fields, "No fields.")
+    renderFieldTree(attrsTree, details.attrs, "No attrs.")
+    renderFieldTree(fieldsTree, details.fields, "No fields.")
 }
 
-function renderFieldsTable(table: HTMLTableElement, fields: FieldPreview[], emptyText: string): void {
-    table.innerHTML = ""
+function renderFieldTree(container: HTMLUListElement, fields: FieldPreview[], emptyText: string): void {
+    container.innerHTML = ""
     if (fields.length === 0) {
-        const tr = document.createElement("tr")
-        const td = document.createElement("td")
-        td.className = "empty-note"
-        td.textContent = emptyText
-        tr.appendChild(td)
-        table.appendChild(tr)
+        const li = document.createElement("li")
+        li.className = "empty-note"
+        li.textContent = emptyText
+        container.appendChild(li)
         return
     }
-    for (const field of fields) {
-        const tr = document.createElement("tr")
-        const nameTd = document.createElement("td")
-        nameTd.className = "field-name"
-        nameTd.textContent = field.name
-        const typeTd = document.createElement("td")
-        typeTd.className = "field-type"
-        typeTd.textContent = field.typeLabel
-        const valueTd = document.createElement("td")
-        valueTd.className = "field-value"
-        valueTd.textContent = field.preview
-        tr.append(nameTd, typeTd, valueTd)
-        table.appendChild(tr)
+    for (const field of fields) container.appendChild(renderFieldNode(field))
+}
+
+function renderFieldNode(field: FieldPreview): HTMLLIElement {
+    const li = document.createElement("li")
+    const pathKey = JSON.stringify(field.path)
+    const isExpanded = field.expandable && expandedPaths.has(pathKey)
+
+    const row = document.createElement("div")
+    row.className = "field-row"
+
+    const toggle = document.createElement("span")
+    toggle.className = "field-toggle"
+    toggle.textContent = field.expandable ? (isExpanded ? "▾" : "▸") : ""
+    if (field.expandable) {
+        toggle.addEventListener("click", () => {
+            if (expandedPaths.has(pathKey)) {
+                expandedPaths.delete(pathKey)
+            } else {
+                expandedPaths.add(pathKey)
+                if (selectedId) port.postMessage({ type: "requestFieldChildren", id: selectedId, path: field.path })
+            }
+            renderDetails(latestDetails)
+        })
     }
+    row.appendChild(toggle)
+
+    const name = document.createElement("span")
+    name.className = "field-name"
+    name.textContent = field.name
+    row.appendChild(name)
+
+    const type = document.createElement("span")
+    type.className = "field-type"
+    type.textContent = field.typeLabel
+    row.appendChild(type)
+
+    const value = document.createElement("span")
+    value.className = "field-value"
+    value.textContent = field.preview
+    row.appendChild(value)
+
+    li.appendChild(row)
+
+    if (isExpanded) {
+        const children = fieldChildrenCache.get(pathKey)
+        if (children === undefined) {
+            const loading = document.createElement("div")
+            loading.className = "field-loading"
+            loading.textContent = "loading…"
+            li.appendChild(loading)
+        } else if (children === null) {
+            const gone = document.createElement("div")
+            gone.className = "field-loading"
+            gone.textContent = "(no longer present)"
+            li.appendChild(gone)
+        } else if (children.length === 0) {
+            const empty = document.createElement("div")
+            empty.className = "field-empty-note"
+            empty.textContent = "(no further fields)"
+            li.appendChild(empty)
+        } else {
+            const ul = document.createElement("ul")
+            for (const child of children) ul.appendChild(renderFieldNode(child))
+            li.appendChild(ul)
+        }
+    }
+
+    return li
 }
