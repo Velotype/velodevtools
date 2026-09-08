@@ -31,7 +31,13 @@ export interface ComponentTreeNode {
 export interface FieldPreview {
     name: string
     typeLabel: string
+    /** Short, one-line, non-recursive summary -- see shared/serialize.ts's preview() */
     preview: string
+    /** Whether this field has further children to expand -- see shared/serialize.ts's childrenOf() */
+    expandable: boolean
+    /** Full path from the resolved component/renderObject/withComponent's `ref` to this field's
+     *  value (e.g. `["c", "someField"]`), passed back on a "requestFieldChildren" to expand it */
+    path: string[]
 }
 
 export interface ComponentDetails {
@@ -95,6 +101,7 @@ export type PageToBridgeMessage =
     | { source: typeof PAGE_HOOK_SOURCE; type: "details"; requestId: string; details: ComponentDetails | null }
     | { source: typeof PAGE_HOOK_SOURCE; type: "highlightRects"; requestId: string; rects: DOMRectSummary[] }
     | { source: typeof PAGE_HOOK_SOURCE; type: "events"; requestId: string; events: EventsSnapshot }
+    | { source: typeof PAGE_HOOK_SOURCE; type: "fieldChildren"; requestId: string; id: string; path: string[]; children: FieldPreview[] | null }
 
 export type BridgeToPageMessage =
     | { source: typeof BRIDGE_SOURCE; type: "requestTree"; requestId: string }
@@ -102,6 +109,7 @@ export type BridgeToPageMessage =
     | { source: typeof BRIDGE_SOURCE; type: "requestHighlight"; requestId: string; id: string | null }
     | { source: typeof BRIDGE_SOURCE; type: "requestHookStatus" }
     | { source: typeof BRIDGE_SOURCE; type: "requestEvents"; requestId: string }
+    | { source: typeof BRIDGE_SOURCE; type: "requestFieldChildren"; requestId: string; id: string; path: string[] }
 
 // ---------------------------------------------------------------------------
 // panel (DevTools page) <-> background <-> bridge (ISOLATED content script), via chrome.runtime.Port
@@ -113,6 +121,7 @@ export type PanelRequest =
     | { type: "requestHighlight"; id: string | null }
     | { type: "requestHookStatus" }
     | { type: "requestEvents" }
+    | { type: "requestFieldChildren"; id: string; path: string[] }
 
 export type PanelResponse =
     | { type: "hookStatus"; status: HookStatus }
@@ -120,6 +129,7 @@ export type PanelResponse =
     | { type: "details"; details: ComponentDetails | null }
     | { type: "contentScriptGone" }
     | { type: "events"; events: EventsSnapshot }
+    | { type: "fieldChildren"; id: string; path: string[]; children: FieldPreview[] | null }
 
 /** Port name used by both panel-tree and popup when connecting to the background worker */
 export const TREE_PORT_NAME = "velodevtools-tree"

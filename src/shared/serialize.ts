@@ -1,15 +1,19 @@
 /**
- * Turns an arbitrary live JS value into a short, safe-to-clone string preview.
+ * Turns an arbitrary live JS value into safe-to-clone data for the field inspector: a short
+ * one-line `preview()` summary, and (for objects/arrays/Maps/Sets/RenderObjects) `childrenOf()` to
+ * enumerate its own properties on demand for expand/collapse navigation.
  *
  * Used for component field/attr values, which can be anything a page's Velotype Components hold
- * (DOM nodes, functions, RenderObjects, circular structures, huge arrays, ...). Never throws, and
- * never returns the live value itself -- only text -- since these previews cross a postMessage /
+ * (DOM nodes, functions, RenderObjects, huge arrays, ...). Never throws, and never returns the live
+ * value itself -- only text and further-enumerable child values -- since these cross a postMessage /
  * structured-clone boundary where functions and DOM nodes are not cloneable.
  */
 
 const MAX_STRING = 120
-const MAX_ITEMS = 20
-const MAX_DEPTH = 2
+const MAX_CHILDREN = 200
+/** Bounds RenderObject-of-RenderObject-of-RenderObject... unwrapping in preview(); real chains
+ *  this deep are not a thing Velotype produces, this is just a defensive cap. */
+const MAX_RENDER_OBJECT_UNWRAP_DEPTH = 5
 
 export function typeLabelOf(value: unknown): string {
     if (value === null) return "null"
@@ -21,11 +25,9 @@ export function typeLabelOf(value: unknown): string {
     return typeof value
 }
 
-export function preview(value: unknown): string {
-    return previewInner(value, 0, new WeakSet())
-}
-
-function previewInner(value: unknown, depth: number, seen: WeakSet<object>): string {
+/** A short, one-line, non-recursive summary -- the collapsed label for a field. Expand via
+ *  childrenOf() to see further into an object/array rather than inlining it here. */
+export function preview(value: unknown, renderObjectUnwrapDepth = 0): string {
     if (value === null) return "null"
     if (value === undefined) return "undefined"
     const t = typeof value
@@ -37,38 +39,46 @@ function previewInner(value: unknown, depth: number, seen: WeakSet<object>): str
         const fn = value as (...args: unknown[]) => unknown
         return fn.name ? `ƒ ${fn.name}()` : "ƒ ()"
     }
-
-    const obj = value as object
-    if (seen.has(obj)) return "[circular]"
-
-    if (isElementLike(value)) return describeElement(value as Element)
+    if (isElementLike(value)) return describeElement(value)
     if (isRenderObjectLike(value)) {
-        seen.add(obj)
-        return `${renderObjectKind(value)}(${previewInner(value.value, depth + 1, seen)})`
+        const inner = renderObjectUnwrapDepth < MAX_RENDER_OBJECT_UNWRAP_DEPTH
+            ? preview(value.value, renderObjectUnwrapDepth + 1)
+            : "…"
+        return `${renderObjectKind(value)}(${inner})`
     }
     if (value instanceof Map) return `Map(${value.size})`
     if (value instanceof Set) return `Set(${value.size})`
+    if (Array.isArray(value)) return `Array(${value.length})`
 
+    // Plain object or class instance
+    const name = constructorNameOf(value)
+    if (name !== "Object") return name
+    const keyCount = Object.keys(value).length
+    return keyCount === 0 ? "{}" : `{${keyCount} key${keyCount === 1 ? "" : "s"}}`
+}
+
+/**
+ * Enumerates a value's own children for expand/collapse navigation, or `null` if `value` isn't
+ * something with further children to show (a primitive, function, or DOM element).
+ *
+ * Capped at MAX_CHILDREN per level -- this is a debugging tool, not a full data dump.
+ */
+export function childrenOf(value: unknown): Array<{ key: string; value: unknown }> | null {
+    if (value === null || typeof value !== "object") return null
+    if (isElementLike(value)) return null
+    if (isRenderObjectLike(value)) return [{ key: "value", value: value.value }]
+    if (value instanceof Map) {
+        return Array.from(value.entries(), ([k, v]) => [k, v] as const)
+            .slice(0, MAX_CHILDREN)
+            .map(([k, v], index) => ({ key: typeof k === "string" ? k : `[${index}]`, value: v }))
+    }
+    if (value instanceof Set) {
+        return Array.from(value.values()).slice(0, MAX_CHILDREN).map((v, index) => ({ key: `[${index}]`, value: v }))
+    }
     if (Array.isArray(value)) {
-        if (depth >= MAX_DEPTH) return `Array(${value.length})`
-        seen.add(obj)
-        const items = value.slice(0, MAX_ITEMS).map(v => previewInner(v, depth + 1, seen))
-        const suffix = value.length > MAX_ITEMS ? `, … (${value.length} total)` : ""
-        return `[${items.join(", ")}${suffix}]`
+        return value.slice(0, MAX_CHILDREN).map((v, index) => ({ key: String(index), value: v }))
     }
-
-    if (t === "object") {
-        if (depth >= MAX_DEPTH) return constructorNameOf(value)
-        seen.add(obj)
-        const keys = Object.keys(value as Record<string, unknown>)
-        const shown = keys.slice(0, MAX_ITEMS).map(k => `${k}: ${previewInner((value as Record<string, unknown>)[k], depth + 1, seen)}`)
-        const suffix = keys.length > MAX_ITEMS ? `, … (${keys.length} keys)` : ""
-        const name = constructorNameOf(value)
-        const prefix = name && name !== "Object" ? `${name} ` : ""
-        return `${prefix}{${shown.join(", ")}${suffix}}`
-    }
-
-    return String(value)
+    return Object.entries(value).slice(0, MAX_CHILDREN).map(([key, v]) => ({ key, value: v }))
 }
 
 function truncateString(s: string): string {

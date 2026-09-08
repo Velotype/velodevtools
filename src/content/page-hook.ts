@@ -26,7 +26,7 @@ import {
     type FieldPreview,
     type HookStatus
 } from "../shared/protocol.ts"
-import { isRenderObjectLike, preview, typeLabelOf } from "../shared/serialize.ts"
+import { childrenOf, isRenderObjectLike, preview, typeLabelOf } from "../shared/serialize.ts"
 
 // ---- Minimal local view of the hook's shape -------------------------------------------------
 // Deliberately not imported from `velotype` -- see file header. Matches the runtime contract of
@@ -146,10 +146,27 @@ function resolveById(id: string): { ref: Record<string, unknown>; metadata: Velo
     return { ref: ref as Record<string, unknown>, metadata, kind, vtKey }
 }
 
-function fieldsOf(obj: Record<string, unknown>, exclude: Set<string> = new Set()): FieldPreview[] {
-    return Object.entries(obj)
-        .filter(([name]) => !exclude.has(name))
-        .map(([name, value]) => ({ name, typeLabel: typeLabelOf(value), preview: preview(value) }))
+/**
+ * Builds the FieldPreview[] for a value's own children, each carrying the full path (from the
+ * resolved component/renderObject/withComponent's `ref`) needed to expand it further later --
+ * see resolveFieldChildren() below, which walks that same path back to a live value on demand.
+ */
+function fieldPreviewsFor(value: unknown, pathPrefix: string[], excludeKeys?: Set<string>): FieldPreview[] {
+    const children = childrenOf(value)
+    if (!children) return []
+    return children
+        .filter(({ key }) => !excludeKeys?.has(key))
+        .map(({ key, value: childValue }) => ({
+            name: key,
+            typeLabel: typeLabelOf(childValue),
+            preview: preview(childValue),
+            expandable: childrenOf(childValue) !== null,
+            path: [...pathPrefix, key]
+        }))
+}
+
+function singleFieldPreview(name: string, value: unknown, path: string[]): FieldPreview {
+    return { name, typeLabel: typeLabelOf(value), preview: preview(value), expandable: childrenOf(value) !== null, path }
 }
 
 function buildDetails(id: string): ComponentDetails | null {
@@ -158,14 +175,13 @@ function buildDetails(id: string): ComponentDetails | null {
     const { ref, kind } = resolved
 
     if (kind === "component") {
-        const componentInstance = ref.c as Record<string, unknown>
         return {
             id,
             label: labelFor(ref, kind),
             kind,
             tag: "",
-            attrs: fieldsOf((ref.a as Record<string, unknown>) || {}),
-            fields: fieldsOf(componentInstance, new Set(["attrs"]))
+            attrs: fieldPreviewsFor(ref.a, ["a"]),
+            fields: fieldPreviewsFor(ref.c, ["c"], new Set(["attrs"]))
         }
     }
     if (kind === "renderObject") {
@@ -175,7 +191,7 @@ function buildDetails(id: string): ComponentDetails | null {
             kind,
             tag: "",
             attrs: [],
-            fields: [{ name: "value", typeLabel: typeLabelOf(ref.value), preview: preview(ref.value) }]
+            fields: [singleFieldPreview("value", (ref as { value: unknown }).value, ["value"])]
         }
     }
     // withComponent
@@ -186,12 +202,22 @@ function buildDetails(id: string): ComponentDetails | null {
         kind,
         tag: "",
         attrs: [],
-        fields: withObjects.map((obj, index) => ({
-            name: `[${index}]`,
-            typeLabel: typeLabelOf(obj),
-            preview: preview(obj)
-        }))
+        fields: withObjects.map((obj, index) => singleFieldPreview(`[${index}]`, obj, ["w", String(index)]))
     }
+}
+
+/** Re-resolves `id` and walks `path` (as produced by fieldPreviewsFor/singleFieldPreview above)
+ *  back to a live value, then returns previews of *its* children -- the on-demand "expand" step.
+ *  Returns null only if the component/renderObject/withComponent itself is gone; a path that no
+ *  longer resolves to something expandable just yields an empty array. */
+function resolveFieldChildren(id: string, path: string[]): FieldPreview[] | null {
+    const resolved = resolveById(id)
+    if (!resolved) return null
+    const value = path.reduce<unknown>((current, key) => {
+        if (current === null || current === undefined) return undefined
+        return (current as Record<string, unknown>)[key]
+    }, resolved.ref)
+    return fieldPreviewsFor(value, path)
 }
 
 function buildHighlightRects(id: string | null): DOMRectSummary[] {
@@ -274,6 +300,9 @@ window.addEventListener("message", (event: MessageEvent) => {
             break
         case "requestEvents":
             post({ source: PAGE_HOOK_SOURCE, type: "events", requestId: data.requestId, events: buildEventsSnapshot() })
+            break
+        case "requestFieldChildren":
+            post({ source: PAGE_HOOK_SOURCE, type: "fieldChildren", requestId: data.requestId, id: data.id, path: data.path, children: resolveFieldChildren(data.id, data.path) })
             break
     }
 })

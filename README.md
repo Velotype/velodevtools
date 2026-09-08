@@ -2,7 +2,7 @@
 
 A Chrome extension for debugging [Velotype](https://github.com/Velotype/velotype) projects. Three DevTools panels:
 
-- **Velotype** — the live component tree for the page, similar to React DevTools: class names, DOM anchor, and (for Class Components) their `attrs` and own instance fields, including live `RenderObject`/`RenderBasic` values. Click a node to inspect it and highlight it on the page.
+- **Velotype** — the live component tree for the page, similar to React DevTools: class names, DOM anchor, and (for Class Components) their `attrs` and own instance fields, including live `RenderObject`/`RenderBasic` values. Click a node to inspect it and highlight it on the page. Fields are a real expand/collapse tree, not a flattened string: any object/array/Map/Set field can be expanded arbitrarily deep to its actual live values (fetched fresh from the page on each expand, and kept live for already-expanded branches) rather than dead-ending at a bare "Object".
 - **Velotype Events** — a snapshot of the event bus's current registrations (`listenersF`): every listening key, how many listeners are on it, and (resolved against `domReferences`) which live components/RenderObjects those are. This is a snapshot of what's *registered*, not a trace of what has *fired* — see [Known limitations](#known-limitations).
 - **VeloJSON** — decodes [velojson](https://github.com/Velotype/velojson) (VSON/VBIN) binary payloads. Automatically inspects network request/response bodies while the panel is open, plus a manual decode (bytes → JSON) and encode (JSON → bytes) tool.
 
