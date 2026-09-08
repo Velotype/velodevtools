@@ -29,8 +29,11 @@ body { margin: 0; font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", 
 #left-pane { width: 55%; border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: auto; }
 #right-pane { flex: 1; overflow: auto; padding: 10px 12px; }
 .pane-header { padding: 6px 10px; border-bottom: 1px solid var(--border); font-weight: 600; display: flex; align-items: center; gap: 8px; flex: none; }
+.pane-header.secondary { font-weight: 500; color: var(--muted); }
 .hint { font-weight: normal; color: var(--muted); font-size: 11px; }
 .pane-header button { margin-left: auto; }
+#requests-scroll { flex: 1 1 auto; overflow: auto; min-height: 60px; }
+#manual-divider { flex: none; height: 10px; border-top: 1px solid var(--border); background: var(--accent-bg); }
 table#requests-table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
 table#requests-table th, table#requests-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 1px; }
 table#requests-table th:nth-child(2), table#requests-table td:nth-child(2) { max-width: none; width: 100%; }
