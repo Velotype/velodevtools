@@ -84,6 +84,14 @@ function responseBodyFrom(entry: chrome.devtools.network.Request): Promise<BodyR
 }
 
 async function handleEntry(entry: chrome.devtools.network.Request): Promise<void> {
+    const request = requestBodyFrom(entry)
+    const response = await responseBodyFrom(entry)
+    // Only list requests that are actually velojson on at least one side (by Content-Type, not
+    // just "did it happen to decode" -- a confirmed VSON/VBIN body that failed to decode still
+    // belongs in the list, since that failure is itself the interesting thing to see).
+    const isVelojson = classifyContentType(request.contentType) === "vson-or-vbin" || classifyContentType(response.contentType) === "vson-or-vbin"
+    if (!isVelojson) return
+
     const url = (() => {
         try {
             return new URL(entry.request.url).pathname || entry.request.url
@@ -91,13 +99,7 @@ async function handleEntry(entry: chrome.devtools.network.Request): Promise<void
             return entry.request.url
         }
     })()
-    const row: RequestRow = {
-        id: nextId++,
-        method: entry.request.method,
-        url,
-        request: requestBodyFrom(entry),
-        response: await responseBodyFrom(entry)
-    }
+    const row: RequestRow = { id: nextId++, method: entry.request.method, url, request, response }
     rows.unshift(row)
     renderRows()
 }

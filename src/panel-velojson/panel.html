@@ -6,15 +6,21 @@
     <div id="left-pane">
       <div class="pane-header">
         Network requests
-        <span id="hint" class="hint">(captured while this panel is open)</span>
+        <span id="hint" class="hint">(VSON/VBIN only, captured while this panel is open)</span>
         <button id="clear-btn">Clear</button>
       </div>
-      <table id="requests-table">
-        <thead><tr><th>Method</th><th>URL</th><th>Req</th><th>Resp</th></tr></thead>
-        <tbody id="requests-body"></tbody>
-      </table>
+      <div id="requests-scroll">
+        <table id="requests-table">
+          <thead><tr><th>Method</th><th>URL</th><th>Req</th><th>Resp</th></tr></thead>
+          <tbody id="requests-body"></tbody>
+        </table>
+      </div>
 
-      <div class="pane-header">Manual decode / encode</div>
+      <div id="manual-divider"></div>
+      <div class="pane-header secondary">
+        Manual decode / encode
+        <span class="hint">(uncommon — paste bytes/JSON directly, no live request needed)</span>
+      </div>
       <div id="manual">
         <label>Input format
           <select id="manual-format">
