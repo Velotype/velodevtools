@@ -10,19 +10,19 @@ A toolbar popup shows a quick "is Velotype present on this page" status without 
 
 ## Requires a devtools hook in Velotype
 
-Velotype's `domReferences` registry (the map from DOM elements to live Component/RenderObject instances) is module-private — there's no equivalent of React's `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` to read it from outside. This extension only works against a Velotype build that installs `window.__VELOTYPE_DEVTOOLS_HOOK__`, added to `tsx-core.ts` alongside this extension (see the `Velotype` repo). If a site's `vk`-tagged elements show up but the tree is empty, its Velotype bundle predates that hook.
+Velotype's `domReferences` registry (the map from DOM elements to live Component/RenderObject instances) is module-private — there's no equivalent of React's `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` to read it from outside. This extension only works against a Velotype build that installs `window.__VELOTYPE_DEVTOOLS_HOOK__`, installed by `src/tsx/devtools-hook.ts` in the `Velotype` repo (from every Velotype entry point). If a site uses Velotype but the tree is empty, its Velotype bundle predates that hook.
 
 The hook is a small singleton keyed by an auto-incrementing instance id:
 
 ```ts
 window.__VELOTYPE_DEVTOOLS_HOOK__ = {
-    instances: Map<number, { domKeyName: string, domReferences: Map<string, ...> }>,
+    instances: Map<number, { version: string, domKeyProperty: symbol, domReferences: Map<number, ...>, listenersF, listenersR, styleSectionMounted }>,
     register(metadata) { ... },
     unregister(instanceId) { ... }
 }
 ```
 
-Multiple independently-bundled Velotype instances on one page (micro-frontends, or version skew across bundles) each register separately. Since every instance defaults to the same `domKeyName` ("vk") and restarts its key counter at 1, two instances would otherwise tag elements with colliding attributes — Velotype's installer avoids this by checking already-registered `domKeyName`s and calling `setDomKey()` to pick a free one (`vk`, `vk-2`, `vk-3`, ...) before any of that instance's components mount.
+Each element bound to a Component or RenderObject stores its key under that instance's `domKeyProperty`, a `Symbol` unique to the instance, rather than in a DOM attribute. Multiple independently-bundled Velotype instances on one page (micro-frontends, or version skew across bundles) each register separately, and because every instance has its own Symbol, their keys never collide even though each instance restarts its key counter at 1. Each instance also registers its Velotype `version`, which the panels show.
 
 ## Architecture
 
@@ -38,40 +38,54 @@ src/content/page-hook.ts    -- MAIN world content script; the only context that 
 src/content/bridge.ts       -- ISOLATED world content script; has chrome.* APIs, owns the
         │  chrome.runtime.Port      on-page highlight overlay (the DOM is shared across worlds,
         ▼                           only the JS heap is isolated)
-src/background/service-worker.ts   -- pure relay, keyed by tabId
+src/background/service-worker.ts   -- pure relay, keyed by tabId and frameId
         │  chrome.runtime.Port
         ▼
 src/panel-tree/panel.ts     -- the DevTools panel UI
 ```
 
 `page-hook.ts` never imports the `velotype` package — it only reads the untyped
-`window.__VELOTYPE_DEVTOOLS_HOOK__` global, so one build of this extension works against whatever
-Velotype version a page happens to ship. Turning a `domReferences` entry into a tree node uses duck
+`window.__VELOTYPE_DEVTOOLS_HOOK__` global. It supports the latest Velotype release. Turning a `domReferences` entry into a tree node uses duck
 typing against Velotype's internal (single-letter, undocumented) property names (`.c`, `.a`, `.e`,
 `.w`, `.k` — see `classify()`/`labelFor()` in `page-hook.ts`), the same way React DevTools is
 coupled to React's fiber internals. If Velotype ever renames those, this needs updating alongside.
 
 The **Velotype Events** panel reads `listenersF`/`listenersR`, which are also part of
-`__vtAppMetadata` — no extra hook needed beyond the one above.
+`__vtAppMetadata`, for what is registered. For the live trace, it asks each page to call
+`metadata.setEventTracer(fn)`: Velotype calls the tracer for every event just before its listeners
+receive it, and the page batches the entries (key, event, emitter, data preview, listeners) to the
+panel. Velotype emits through a field that only `setEventTracer` writes, so an app without devtools
+tracing runs the same code as before. An instance that has no `setEventTracer` is skipped.
 
-The **VeloJSON** panel needs none of this — it runs entirely inside the DevTools page context using
-`chrome.devtools.network` and the real `@velotype/velojson` package (via JSR).
+**Frames.** Every frame of a page runs its own content scripts, so each has its own Velotype instances
+and its own port to the relay, and the relay tags what a frame sends with its `frameId` and URL. The
+tree and Events panels show each frame that has Velotype as its own root, and requests about a node
+(details, fields, highlight) go to the frame the node belongs to.
+
+The **VeloJSON** panel decodes with the real `@velotype/velojson` package (via JSR) inside the DevTools
+page, and reads bodies from `chrome.devtools.network`. For request bodies it also asks the page for
+the exact bytes (see below).
+
+**Request bodies.** The network API gives a request's body only as text, decoded as UTF-8, so a binary
+body has lost every byte that is not valid UTF-8 by the time the extension sees it. While the VeloJSON
+panel is open, `src/content/body-capture.ts` (in each page's main world) wraps `fetch`,
+`XMLHttpRequest`, and `navigator.sendBeacon`, and reports the bytes of bodies whose Content-Type says
+VSON or VBIN. The panel matches each network entry with its capture by method, URL, and start time, and does not decode a request body that has none.
+Nothing is wrapped until the panel asks, and bodies of other types are never copied.
 
 ## Known limitations
 
-- **Component tree only covers the top frame.** The background relay only tracks one content
-  script connection per tab; components rendered inside `<iframe>`s aren't merged into the tree.
-- **Events panel is a registration snapshot, not a live trace.** It shows what's currently
-  registered on the event bus, not a log of events as they fire — a "did my `onChange` actually
-  fire, with what data" trace would need a small hook in `emitEvent()` itself. Measured at ~100
-  bytes minified (~60 bytes gzipped) added to Velotype's own shipped bundle, but decided against for
-  now — the registration snapshot covers most debugging needs (leaked listeners, "is anything even
-  listening on this key") without that always-on cost or the memory pinned by a trace buffer.
-- **Request body decoding is best-effort.** `chrome.devtools.network`'s extension API only exposes
-  `postData` as text, which can be lossy for binary bodies depending on Chrome version. Response
-  body decoding (`request.getContent()`) is reliable since it gives an explicit `base64` encoding
-  flag for binary content. Use the manual decode tool as a fallback for request payloads that don't
-  decode automatically.
+- **The event trace needs a Velotype version with event tracing.** Without it the Events panel still
+  shows what is registered, but "Start trace" shows nothing. The trace starts empty when you press
+  Start, and keeps the last 1,000 events.
+- **Request bodies are exact only when the page's own code sends them.** A VSON or VBIN body sent with
+  `fetch`, `XMLHttpRequest`, or `sendBeacon` while the VeloJSON panel is open is captured byte for
+  byte. A request that does not come from the page's JavaScript (a worker, or the browser itself) has
+  no capture, and its body is not decoded: `chrome.devtools.network`'s `postData` text is UTF-8
+  decoded, so it can hold corrupted bytes, and the panel says the bytes were not captured instead of
+  showing them. A form post cannot send VSON or VBIN as binary anyway. Response bodies are reliable
+  (`request.getContent()` says whether the content is base64). Use the manual decode tool as a fallback
+  for request payloads that don't decode automatically.
 - **VSON/VBIN detection on the network tab is Content-Type only, by design.** velojson payloads
   have real, specific Content-Types — `application/vson` and `application/vbin` (see veloschema's
   `ContentTypes` and its generated clients/gateways, which set/read exactly these, typically as

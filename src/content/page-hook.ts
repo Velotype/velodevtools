@@ -8,9 +8,8 @@
  * world boundary while still sharing the same document.
  *
  * This file intentionally does NOT import anything from the `velotype` package: the devtools hook
- * it reads (`window.__VELOTYPE_DEVTOOLS_HOOK__`) is a plain untyped global by design, so this
- * extension works against whatever version of Velotype a page happens to ship, not just whatever
- * version velodevtools was built against.
+ * it reads (`window.__VELOTYPE_DEVTOOLS_HOOK__`) is a plain untyped global by design. It supports
+ * the latest Velotype; each instance reports its `version` for when versions need telling apart.
  */
 import {
     BRIDGE_SOURCE,
@@ -19,6 +18,7 @@ import {
     type ComponentDetails,
     type ComponentNodeKind,
     type ComponentTreeNode,
+    type TracedEvent,
     type DOMRectSummary,
     type EventKeySummary,
     type EventPartyRef,
@@ -27,16 +27,22 @@ import {
     type HookStatus
 } from "../shared/protocol.ts"
 import { childrenOf, isRenderObjectLike, preview, typeLabelOf } from "../shared/serialize.ts"
+import { startBodyCapture, stopBodyCapture } from "./body-capture.ts"
 
 // ---- Minimal local view of the hook's shape -------------------------------------------------
 // Deliberately not imported from `velotype` -- see file header. Matches the runtime contract of
 // `window.__VELOTYPE_DEVTOOLS_HOOK__` installed by velotype's tsx-core.ts.
 
 interface VelotypeHookInstanceMetadata {
-    domKeyName: string
-    domReferences: Map<string, unknown>
+    /** The version of this Velotype instance */
+    version: string
+    /** Property holding each bound element's DOM key */
+    domKeyProperty: symbol
+    domReferences: Map<number, unknown>
     /** Forward event-bus map: listeningKey -> vtKey (of the listening object) -> listener fn */
-    listenersF: Map<string, Map<string, unknown>>
+    listenersF: Map<string, Map<number, unknown>>
+    /** Traces the events this instance emits (Velotype versions with event tracing only) */
+    setEventTracer?: (tracer: ((listeningKey: string, event: { emittingObject?: unknown; event?: unknown; data?: unknown }) => void) | undefined) => void
 }
 interface VelotypeDevtoolsHookGlobal {
     instances: Map<number, VelotypeHookInstanceMetadata>
@@ -60,7 +66,7 @@ function getHookStatus(): HookStatus {
         present: instances.length > 0,
         instances: instances.map(([instanceId, metadata]) => ({
             instanceId,
-            domKeyName: metadata.domKeyName,
+            version: metadata.version,
             componentCount: metadata.domReferences.size
         }))
     }
@@ -68,14 +74,14 @@ function getHookStatus(): HookStatus {
 
 /** Duck-types which kind of object a domReferences entry is -- see velotype's tsx-core.ts:
  *  InternalComponent has `.c` (the user Component, with a `.render` method); a RenderObject-like
- *  has `.renderDefault`/`.unmountKey`; a WithComponent has `.w` (an array of RenderObjects). */
+ *  has `.rD`/`.uK`; a WithComponent has `.w` (an array of RenderObjects). */
 function classify(ref: unknown): ComponentNodeKind | null {
     if (typeof ref !== "object" || ref === null) return null
     const r = ref as Record<string, unknown>
     const c = r.c as Record<string, unknown> | undefined
     if (typeof c === "object" && c !== null && typeof c.render === "function") return "component"
     if (isRenderObjectLike(ref)) return "renderObject"
-    if (Array.isArray(r.w) && typeof r.k === "string" && typeof r.unmount === "function") return "withComponent"
+    if (Array.isArray(r.w) && typeof r.k === "number" && typeof r.unmount === "function") return "withComponent"
     return null
 }
 
@@ -88,11 +94,22 @@ function labelFor(ref: Record<string, unknown>, kind: ComponentNodeKind): string
     return "vtwith"
 }
 
+/** An element's DOM key for this Velotype instance as a string, or null if it isn't bound */
+function keyOf(element: Element, metadata: VelotypeHookInstanceMetadata): string | null {
+    const key = (element as unknown as Record<symbol, unknown>)[metadata.domKeyProperty]
+    return typeof key === "number" ? String(key) : null
+}
+
+/** The domReferences entry for a vtKey in string form */
+function referenceFor(metadata: VelotypeHookInstanceMetadata, vtKey: string): unknown {
+    return metadata.domReferences.get(Number(vtKey))
+}
+
 function tryResolveNode(element: Element, instances: Array<[number, VelotypeHookInstanceMetadata]>): ComponentTreeNode | null {
     for (const [instanceId, metadata] of instances) {
-        const key = element.getAttribute(metadata.domKeyName)
+        const key = keyOf(element, metadata)
         if (key === null) continue
-        const ref = metadata.domReferences.get(key)
+        const ref = referenceFor(metadata, key)
         if (ref === undefined) continue
         const kind = classify(ref)
         if (!kind) continue
@@ -139,7 +156,7 @@ function resolveById(id: string): { ref: Record<string, unknown>; metadata: Velo
     const hook = window.__VELOTYPE_DEVTOOLS_HOOK__
     const metadata = hook?.instances.get(instanceId)
     if (!metadata) return null
-    const ref = metadata.domReferences.get(vtKey)
+    const ref = referenceFor(metadata, vtKey)
     if (ref === undefined) return null
     const kind = classify(ref)
     if (!kind) return null
@@ -226,9 +243,10 @@ function buildHighlightRects(id: string | null): DOMRectSummary[] {
     if (!resolved) return []
     const { metadata, vtKey } = resolved
     const rects: DOMRectSummary[] = []
-    const candidates = document.querySelectorAll(`[${CSS.escape(metadata.domKeyName)}]`)
+    // Keys stored as a property can't be selected with querySelectorAll, so every element is checked
+    const candidates = document.querySelectorAll("*")
     for (const el of Array.from(candidates)) {
-        if (el.getAttribute(metadata.domKeyName) !== vtKey) continue
+        if (keyOf(el, metadata) !== vtKey) continue
         const rect = el.getBoundingClientRect()
         rects.push({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
     }
@@ -237,16 +255,15 @@ function buildHighlightRects(id: string | null): DOMRectSummary[] {
 
 // ---- Event bus registration snapshot -------------------------------------------------------
 // Read-only, from listenersF (already part of __vtAppMetadata) -- no velotype core changes
-// needed. Shows what's currently registered, not what has fired; see README for why a live trace
-// is a separate, heavier feature.
+// needed. This shows what is registered; the event trace below shows what fires.
 
-const RENDER_OBJECT_KEY_PATTERN = /^vt-ro-(.+)$/
+const RENDER_OBJECT_KEY_PATTERN = /^vt-ro-(\d+)$/
 
 /** Resolves a vtKey back to a display-friendly reference, if it's still a live component/
  *  renderObject/withComponent in this instance's domReferences -- otherwise a bare id. */
-function resolveEventParty(instanceId: number, metadata: VelotypeHookInstanceMetadata, vtKey: string): EventPartyRef | { id: string; label: null; kind: null } {
+function resolveEventParty(instanceId: number, metadata: VelotypeHookInstanceMetadata, vtKey: string | number): EventPartyRef | { id: string; label: null; kind: null } {
     const id = `${instanceId}:${vtKey}`
-    const ref = metadata.domReferences.get(vtKey)
+    const ref = referenceFor(metadata, String(vtKey))
     const kind = classify(ref)
     if (!kind) return { id, label: null, kind: null }
     return { id, label: labelFor(ref as Record<string, unknown>, kind), kind }
@@ -268,6 +285,64 @@ function buildEventsSnapshot(): EventsSnapshot {
             return { instanceId, keys }
         })
     }
+}
+
+// ---- Event trace --------------------------------------------------------------------------------
+//
+// A tracer is installed on each Velotype instance, which calls it for every event just before the
+// listeners receive it. Entries are sent in batches, so a burst of events is one message.
+
+const MAX_BATCH = 200
+let traceBatch: TracedEvent[] = []
+let traceTimer: number | undefined
+
+function flushTrace(): void {
+    traceTimer = undefined
+    if (traceBatch.length === 0) return
+    post({ source: PAGE_HOOK_SOURCE, type: "tracedEvents", events: traceBatch })
+    traceBatch = []
+}
+
+function tracerFor(instanceId: number, metadata: VelotypeHookInstanceMetadata) {
+    return (key: string, event: { emittingObject?: unknown; event?: unknown; data?: unknown }): void => {
+        const emitterKey = (event.emittingObject as { vtKey?: unknown } | undefined)?.vtKey
+        const listenerMap = metadata.listenersF.get(key)
+        traceBatch.push({
+            time: Date.now(),
+            instanceId,
+            key,
+            name: String(event.event),
+            emitter: emitterKey === undefined ? { id: "", label: null, kind: null } : resolveEventParty(instanceId, metadata, emitterKey as number),
+            data: event.data === undefined ? null : preview(event.data),
+            listeners: listenerMap ? Array.from(listenerMap.keys()).map(vtKey => resolveEventParty(instanceId, metadata, vtKey)) : []
+        })
+        if (traceBatch.length >= MAX_BATCH) flushTrace()
+        else if (traceTimer === undefined) traceTimer = setTimeout(flushTrace, 100) as unknown as number
+    }
+}
+
+/** Starts tracing in every instance that can, and in ones that register later */
+let tracing = false
+const tracedInstances = new Set<number>()
+function updateTracing(): void {
+    for (const [instanceId, metadata] of getInstances()) {
+        if (tracing && !tracedInstances.has(instanceId) && metadata.setEventTracer) {
+            metadata.setEventTracer(tracerFor(instanceId, metadata))
+            tracedInstances.add(instanceId)
+        }
+    }
+}
+function startEventTrace(): void {
+    tracing = true
+    updateTracing()
+}
+function stopEventTrace(): void {
+    tracing = false
+    for (const [instanceId, metadata] of getInstances()) {
+        if (tracedInstances.has(instanceId)) metadata.setEventTracer?.(undefined)
+    }
+    tracedInstances.clear()
+    flushTrace()
 }
 
 // ---- Messaging with bridge.ts ---------------------------------------------------------------
@@ -301,6 +376,18 @@ window.addEventListener("message", (event: MessageEvent) => {
         case "requestEvents":
             post({ source: PAGE_HOOK_SOURCE, type: "events", requestId: data.requestId, events: buildEventsSnapshot() })
             break
+        case "startBodyCapture":
+            startBodyCapture(body => post({ source: PAGE_HOOK_SOURCE, type: "capturedBody", body }))
+            break
+        case "stopBodyCapture":
+            stopBodyCapture()
+            break
+        case "startEventTrace":
+            startEventTrace()
+            break
+        case "stopEventTrace":
+            stopEventTrace()
+            break
         case "requestFieldChildren":
             post({ source: PAGE_HOOK_SOURCE, type: "fieldChildren", requestId: data.requestId, id: data.id, path: data.path, children: resolveFieldChildren(data.id, data.path) })
             break
@@ -312,6 +399,7 @@ window.addEventListener("message", (event: MessageEvent) => {
 // than only checking once.
 let lastPresence = false
 function checkAndMaybePush(): void {
+    if (tracing) updateTracing()
     const present = getInstances().length > 0
     if (present !== lastPresence) {
         lastPresence = present

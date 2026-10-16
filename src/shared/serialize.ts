@@ -104,13 +104,12 @@ function describeElement(el: Element): string {
  *
  * These classes aren't exported from Velotype's public API surface, so instead of an
  * `instanceof` check this looks for the shape Velotype's core relies on internally
- * (`renderDefault()` + `unmountKey()` + a `value` getter) -- see MultiRenderable in
- * velotype's tsx-core.ts.
+ * (`rD()` + `uK()` + a `value` getter) -- see MultiRenderable in velotype's tsx-core.ts.
  */
 export function isRenderObjectLike(value: unknown): value is { value: unknown; getString?: () => string; push?: unknown; getAt?: unknown } {
     if (typeof value !== "object" || value === null) return false
     const v = value as Record<string, unknown>
-    return typeof v.renderDefault === "function" && typeof v.unmountKey === "function" && "value" in v
+    return typeof v.rD === "function" && typeof v.uK === "function" && "value" in v
 }
 
 function renderObjectKind(value: { getString?: unknown; push?: unknown; getAt?: unknown }): string {
