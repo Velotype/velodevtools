@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Velotype DevTools",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Inspect the live Velotype component tree and decode velojson (VSON) request/response payloads.",
   "minimum_chrome_version": "111",
   "icons": {
