@@ -5,7 +5,7 @@
  *       <--postMessage-->
  *   bridge.ts (ISOLATED content script, shares the DOM but not the JS heap with the page)
  *       <--chrome.runtime.Port-->
- *   background/service-worker.ts (relays by tabId)
+ *   background/service-worker.ts (relays by tabId and frameId)
  *       <--chrome.runtime.Port-->
  *   panel-tree/panel.ts (the DevTools panel UI)
  *
@@ -51,7 +51,8 @@ export interface ComponentDetails {
 
 export interface HookInstanceSummary {
     instanceId: number
-    domKeyName: string
+    /** The version of Velotype this instance runs */
+    version: string
     componentCount: number
 }
 
@@ -84,8 +85,41 @@ export interface EventKeySummary {
     listeners: Array<EventPartyRef | { id: string; label: null; kind: null }>
 }
 
+/** One event emitted on an instance's event bus, from tracing */
+export interface TracedEvent {
+    /** `Date.now()` when it was emitted */
+    time: number
+    instanceId: number
+    /** The listening key it was emitted on */
+    key: string
+    /** The event's `event` string, such as "onChange" */
+    name: string
+    /** What emitted it, when it is a live component, RenderObject, or withComponent */
+    emitter: EventPartyRef | { id: string; label: null; kind: null }
+    /** A short summary of the event's `data`, or null when it has none */
+    data: string | null
+    /** Whoever was listening on the key when it was emitted */
+    listeners: Array<EventPartyRef | { id: string; label: null; kind: null }>
+}
+
 export interface EventsSnapshot {
     instances: Array<{ instanceId: number; keys: EventKeySummary[] }>
+}
+
+/**
+ * A VSON or VBIN request body, with its exact bytes, as the page's code passed it to fetch,
+ * XMLHttpRequest, or sendBeacon -- see content/body-capture.ts for why the network API's text is
+ * not enough.
+ */
+export interface CapturedRequestBody {
+    method: string
+    /** Absolute, without the fragment: what the network entry's `request.url` will be */
+    url: string
+    /** `Date.now()` when the page made the request, to match it with its network entry */
+    startedAt: number
+    contentType: string | null
+    /** The body's bytes, base64 */
+    bytes: string
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +136,8 @@ export type PageToBridgeMessage =
     | { source: typeof PAGE_HOOK_SOURCE; type: "highlightRects"; requestId: string; rects: DOMRectSummary[] }
     | { source: typeof PAGE_HOOK_SOURCE; type: "events"; requestId: string; events: EventsSnapshot }
     | { source: typeof PAGE_HOOK_SOURCE; type: "fieldChildren"; requestId: string; id: string; path: string[]; children: FieldPreview[] | null }
+    | { source: typeof PAGE_HOOK_SOURCE; type: "capturedBody"; body: CapturedRequestBody }
+    | { source: typeof PAGE_HOOK_SOURCE; type: "tracedEvents"; events: TracedEvent[] }
 
 export type BridgeToPageMessage =
     | { source: typeof BRIDGE_SOURCE; type: "requestTree"; requestId: string }
@@ -110,26 +146,59 @@ export type BridgeToPageMessage =
     | { source: typeof BRIDGE_SOURCE; type: "requestHookStatus" }
     | { source: typeof BRIDGE_SOURCE; type: "requestEvents"; requestId: string }
     | { source: typeof BRIDGE_SOURCE; type: "requestFieldChildren"; requestId: string; id: string; path: string[] }
+    | { source: typeof BRIDGE_SOURCE; type: "startBodyCapture" }
+    | { source: typeof BRIDGE_SOURCE; type: "stopBodyCapture" }
+    | { source: typeof BRIDGE_SOURCE; type: "startEventTrace" }
+    | { source: typeof BRIDGE_SOURCE; type: "stopEventTrace" }
 
 // ---------------------------------------------------------------------------
 // panel (DevTools page) <-> background <-> bridge (ISOLATED content script), via chrome.runtime.Port
 // ---------------------------------------------------------------------------
 
-export type PanelRequest =
-    | { type: "requestTree" }
-    | { type: "requestDetails"; id: string }
-    | { type: "requestHighlight"; id: string | null }
-    | { type: "requestHookStatus" }
-    | { type: "requestEvents" }
-    | { type: "requestFieldChildren"; id: string; path: string[] }
+/**
+ * A frame of the inspected tab. Every frame runs its own content scripts and its own Velotype
+ * instances, so the background tags what each frame sends with where it came from.
+ */
+export interface FrameInfo {
+    /** `chrome.runtime.MessageSender.frameId`: 0 for the top frame */
+    frameId: number
+    url: string
+}
 
-export type PanelResponse =
+/**
+ * A request is for one frame when it has a `frameId` (an id from a node, which belongs to the frame
+ * it came from), and for every frame of the tab when it has none. A `requestHighlight` for a frame
+ * also clears the highlight in the others.
+ */
+export type PanelRequest =
+    | { type: "requestTree"; frameId?: number }
+    | { type: "requestDetails"; id: string; frameId?: number }
+    | { type: "requestHighlight"; id: string | null; frameId?: number }
+    | { type: "requestHookStatus"; frameId?: number }
+    | { type: "requestEvents"; frameId?: number }
+    | { type: "requestFieldChildren"; id: string; path: string[]; frameId?: number }
+    /** Start (or stop) keeping the bytes of VSON and VBIN request bodies, in every frame */
+    | { type: "startBodyCapture" }
+    | { type: "stopBodyCapture" }
+    /** Start (or stop) tracing the events emitted on the event bus, in every frame */
+    | { type: "startEventTrace" }
+    | { type: "stopEventTrace" }
+
+/** What a content script sends to a panel, before the background says which frame it came from */
+export type ContentResponse =
     | { type: "hookStatus"; status: HookStatus }
     | { type: "tree"; tree: ComponentTreeNode[] }
     | { type: "details"; details: ComponentDetails | null }
-    | { type: "contentScriptGone" }
     | { type: "events"; events: EventsSnapshot }
     | { type: "fieldChildren"; id: string; path: string[]; children: FieldPreview[] | null }
+    | { type: "capturedBody"; body: CapturedRequestBody }
+    | { type: "tracedEvents"; events: TracedEvent[] }
+
+export type PanelResponse =
+    | (ContentResponse & { frame: FrameInfo })
+    /** A frame navigated away or was removed, so what it sent earlier is gone */
+    | { type: "frameGone"; frame: FrameInfo }
+    | { type: "contentScriptGone" }
 
 /** Port name used by both panel-tree and popup when connecting to the background worker */
 export const TREE_PORT_NAME = "velodevtools-tree"

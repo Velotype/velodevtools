@@ -17,7 +17,7 @@ import {
     type DOMRectSummary,
     type PageToBridgeMessage,
     type PanelRequest,
-    type PanelResponse
+    type ContentResponse
 } from "../shared/protocol.ts"
 
 let requestCounter = 0
@@ -45,6 +45,14 @@ window.addEventListener("message", (event: MessageEvent) => {
         sendToPanel({ type: "hookStatus", status: data.status })
         return
     }
+    if (data.type === "capturedBody") {
+        sendToPanel({ type: "capturedBody", body: data.body })
+        return
+    }
+    if (data.type === "tracedEvents") {
+        sendToPanel({ type: "tracedEvents", events: data.events })
+        return
+    }
     if (data.type === "highlightRects") {
         drawOverlay(data.rects)
     }
@@ -59,7 +67,7 @@ window.addEventListener("message", (event: MessageEvent) => {
 
 let port: chrome.runtime.Port | null = null
 
-function sendToPanel(message: PanelResponse): void {
+function sendToPanel(message: ContentResponse): void {
     try {
         port?.postMessage(message)
     } catch {
@@ -70,6 +78,10 @@ function sendToPanel(message: PanelResponse): void {
 function connect(): void {
     port = chrome.runtime.connect({ name: TREE_PORT_NAME })
     port.onMessage.addListener(async (message: PanelRequest) => {
+        if (message.type === "startBodyCapture" || message.type === "stopBodyCapture" || message.type === "startEventTrace" || message.type === "stopEventTrace") {
+            window.postMessage({ source: BRIDGE_SOURCE, type: message.type }, "*")
+            return
+        }
         if (message.type === "requestHookStatus") {
             window.postMessage({ source: BRIDGE_SOURCE, type: "requestHookStatus" }, "*")
             return

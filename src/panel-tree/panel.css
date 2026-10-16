@@ -83,3 +83,11 @@ ul.field-tree { padding-left: 0; }
 .field-type { color: var(--muted); flex: none; font-size: 10.5px; }
 .field-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .field-loading, .field-empty-note { color: var(--muted); padding: 1px 4px 1px 21px; font-style: italic; }
+
+.frame-header {
+  list-style: none;
+  padding: 6px 6px 2px;
+  font-size: 11px;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}

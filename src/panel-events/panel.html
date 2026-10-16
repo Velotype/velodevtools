@@ -3,6 +3,18 @@
 <link rel="stylesheet" href="panel.css" />
 <div id="app">
   <div id="status-bar"></div>
+  <div id="trace-bar">
+    <button id="trace-toggle" type="button">Start trace</button>
+    <button id="trace-clear" type="button">Clear</button>
+    <span id="trace-note">Events as they are emitted, with their listeners. Starts empty, and needs a Velotype version with event tracing.</span>
+  </div>
+  <div id="trace-pane" hidden>
+    <table id="trace-table">
+      <thead><tr><th>Time</th><th>Key</th><th>Event</th><th>Emitted by</th><th>Data</th><th>Listeners</th></tr></thead>
+      <tbody id="trace-body"></tbody>
+    </table>
+  </div>
+  <h3 id="registrations-title">Registered listeners</h3>
   <table id="events-table">
     <thead><tr><th>Listening key</th><th>Owner</th><th>Listeners</th></tr></thead>
     <tbody id="events-body"></tbody>

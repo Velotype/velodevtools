@@ -6,6 +6,7 @@
 // README). Bundle size doesn't matter here since this only runs inside the DevTools page, never
 // shipped to an end user's browser.
 import { VSON } from "@velotype/velojson"
+import { TREE_PORT_NAME, type CapturedRequestBody, type PanelResponse } from "../shared/protocol.ts"
 import { base64ToBytes, bytesToBase64, bytesToHex, classifyContentType, describeEncodingFormat, hexToBytes } from "../shared/bytes.ts"
 
 interface BodyResult {
@@ -58,15 +59,75 @@ const detailsEmpty = document.getElementById("details-empty") as HTMLDivElement
 const detailsOutput = document.getElementById("details-output") as HTMLPreElement
 const clearBtn = document.getElementById("clear-btn") as HTMLButtonElement
 
-function requestBodyFrom(entry: chrome.devtools.network.Request): BodyResult {
+// ---- Request bodies ------------------------------------------------------------------------------
+//
+// Chrome's DevTools network API gives a request's body only as text, decoded as UTF-8, so a binary
+// body (VBIN, Key Table) has already lost every byte that is not valid UTF-8. The exact bytes come
+// from the page instead: while this panel is open, every frame reports the VSON and VBIN bodies its
+// code sends with fetch, XMLHttpRequest, and sendBeacon (content/body-capture.ts), and each network
+// entry is matched with its capture. A request that did not come from the page's code has no
+// capture, and falls back to the text.
+
+/** How long a request can wait before it starts, from when the page made it to when the network entry says it began */
+const MATCH_WINDOW_MS = 30_000
+
+const port = chrome.runtime.connect({ name: TREE_PORT_NAME })
+port.postMessage({ type: "init", tabId: chrome.devtools.inspectedWindow.tabId })
+port.postMessage({ type: "startBodyCapture" })
+
+const captures: CapturedRequestBody[] = []
+port.onMessage.addListener((message: PanelResponse) => {
+    if (message.type === "capturedBody") {
+        captures.push(message.body)
+        // Only the recent ones can still be waiting for their network entry
+        if (captures.length > 200) captures.splice(0, captures.length - 200)
+    }
+})
+
+/** Takes the capture made at the time this entry began, for the same method and URL */
+function takeCapture(entry: chrome.devtools.network.Request): CapturedRequestBody | null {
+    const url = entry.request.url.split("#")[0]
+    const began = Date.parse(entry.startedDateTime)
+    let best = -1
+    let bestGap = Infinity
+    captures.forEach((capture, index) => {
+        if (capture.method !== entry.request.method.toUpperCase() || capture.url !== url) return
+        const gap = Math.abs(began - capture.startedAt)
+        if (gap <= MATCH_WINDOW_MS && gap < bestGap) {
+            best = index
+            bestGap = gap
+        }
+    })
+    return best < 0 ? null : captures.splice(best, 1)[0] ?? null
+}
+
+async function requestBodyFrom(entry: chrome.devtools.network.Request): Promise<BodyResult> {
     const postData = entry.request.postData
     if (!postData || !postData.text) return { absent: true, bytes: null, contentType: null, decoded: undefined, error: null }
-    // Chrome's DevTools extension API only exposes postData as text, which can be lossy for
-    // binary bodies -- this is a best-effort decode, see README for details.
-    const bytes = new Uint8Array(postData.text.length)
-    for (let i = 0; i < postData.text.length; i++) bytes[i] = postData.text.charCodeAt(i) & 0xff
     const contentType = postData.mimeType || findHeader(entry.request.headers, "content-type")
-    return { absent: false, bytes, contentType, ...decodeBody(bytes, contentType) }
+    if (classifyContentType(contentType) === "vson-or-vbin") {
+        // The capture is sent when the page makes the request, so it is almost always here already
+        let capture = takeCapture(entry)
+        if (!capture) {
+            await new Promise(resolve => setTimeout(resolve, 150))
+            capture = takeCapture(entry)
+        }
+        if (capture) {
+            const bytes = base64ToBytes(capture.bytes)
+            return { absent: false, bytes, contentType: capture.contentType ?? contentType, ...decodeBody(bytes, capture.contentType ?? contentType) }
+        }
+    }
+    // Not a VSON or VBIN body, so there is nothing to decode
+    if (classifyContentType(contentType) !== "vson-or-vbin") return { absent: false, bytes: null, contentType, decoded: undefined, error: null }
+    // The text the network API gives is UTF-8 decoded, so it may not hold the body's bytes, and
+    // decoding it could show corrupted data as if it were the payload: say what is missing instead
+    return {
+        absent: false,
+        bytes: null,
+        contentType,
+        decoded: undefined,
+        error: "The bytes of this request body were not captured, so it is not decoded. They are captured when the page sends the request with fetch, XMLHttpRequest, or sendBeacon while this panel is open. Use the manual decode tool with the bytes if you have them.",
+    }
 }
 
 function responseBodyFrom(entry: chrome.devtools.network.Request): Promise<BodyResult> {
@@ -84,7 +145,7 @@ function responseBodyFrom(entry: chrome.devtools.network.Request): Promise<BodyR
 }
 
 async function handleEntry(entry: chrome.devtools.network.Request): Promise<void> {
-    const request = requestBodyFrom(entry)
+    const request = await requestBodyFrom(entry)
     const response = await responseBodyFrom(entry)
     // Only list requests that are actually velojson on at least one side (by Content-Type, not
     // just "did it happen to decode" -- a confirmed VSON/VBIN body that failed to decode still
