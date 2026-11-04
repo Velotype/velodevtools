@@ -104,7 +104,9 @@ Nothing is wrapped until the panel asks, and bodies of other types are never cop
   payloads uniformly, but for VBIN it can only produce a "debug format": object keys come back as
   their raw numeric KeyIDs (e.g. `{"1": "hello"}`) rather than real field names, since real names
   require a schema-generated `VBINObjectMapper` (see `veloschema`) that this generic extension has no
-  way to obtain for an arbitrary site. The panel labels VBIN output accordingly.
+  way to obtain for an arbitrary site. The panel labels VBIN output accordingly. A VBIN field holding
+  raw bytes (`VBytes`) that aren't valid UTF-8 can't be shown this way either: the decode fails, since
+  only a schema says the field isn't text.
 
 ## Development
 
