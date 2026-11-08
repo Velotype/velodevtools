@@ -1,5 +1,6 @@
 {
     "imports": {
+        "@astral/astral": "jsr:@astral/astral@^0.5.4",
         "@velotype/velojson": "jsr:@velotype/velojson@^0.0.5",
         "@std/fs": "jsr:@std/fs@^1.0.6",
         "@types/chrome": "npm:@types/chrome@^0.0.280"
@@ -17,5 +18,6 @@
         "watch": "deno task copy-static && deno task bundle --watch",
         "typecheck": "deno check src/",
         "rasterize-icons": "deno run -A scripts/rasterize-icons.ts"
-    }
+    },
+    "lint": {"rules": {"exclude": ["no-window", "no-window-prefix"]}}
 }

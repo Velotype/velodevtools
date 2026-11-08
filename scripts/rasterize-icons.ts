@@ -3,7 +3,7 @@
 // assets/logo.svg. Rasterizes via a real headless Chrome (astral) rather than a hand-rolled SVG
 // renderer, since the logo has an arc in it. Re-run this manually if the logo ever changes; the
 // checked-in PNGs are what actually ships.
-import { launch } from "jsr:@astral/astral@^0.5.4"
+import { launch } from "@astral/astral"
 
 const svgText = await Deno.readTextFile(new URL("../assets/velotype-logo.svg", import.meta.url))
 const svgDataUrl = `data:image/svg+xml;base64,${btoa(svgText)}`
