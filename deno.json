@@ -12,6 +12,7 @@
         "types": ["@types/chrome"]
     },
     "tasks": {
+        "check-baseline": "deno run --no-lock --allow-read jsr:@velotype/velobaseline@0.1.1 src/",
         "copy-static": "deno run -A scripts/copy-static.ts",
         "bundle": "deno bundle --platform browser --format iife --sourcemap=linked --outdir dist src/background/service-worker.ts src/content/page-hook.ts src/content/bridge.ts src/devtools/devtools.ts src/panel-tree/panel.ts src/panel-events/panel.ts src/panel-velojson/panel.ts src/popup/popup.ts",
         "build": "deno task copy-static && deno task bundle",
